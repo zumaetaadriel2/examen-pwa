@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5" />
+      <stop offset="50%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#7c3aed" />
+    </linearGradient>
+    <linearGradient id="glowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#818cf8" stop-opacity="0.2" />
+    </linearGradient>
+    <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#1e1b4b" flood-opacity="0.45" />
+    </filter>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Background Squircle -->
+  <rect width="512" height="512" rx="115" fill="url(#bgGrad)" />
+  
+  <!-- Subtle inner border / glass highlight -->
+  <rect x="8" y="8" width="496" height="496" rx="108" fill="none" stroke="rgba(255, 255, 255, 0.18)" stroke-width="4" />
+
+  <!-- Outer ambient ring -->
+  <circle cx="256" cy="256" r="170" fill="none" stroke="url(#glowGrad)" stroke-width="6" stroke-dasharray="8 12" opacity="0.6" />
+
+  <!-- Central Quiz Emblem / Card Shield -->
+  <g filter="url(#dropShadow)">
+    <rect x="120" y="112" width="272" height="288" rx="44" fill="#ffffff" fill-opacity="0.12" stroke="rgba(255, 255, 255, 0.35)" stroke-width="3" />
+    
+    <!-- Checklist / Quiz Lines -->
+    <rect x="160" y="168" width="130" height="18" rx="9" fill="#ffffff" fill-opacity="0.9" />
+    <rect x="160" y="206" width="180" height="14" rx="7" fill="#c7d2fe" fill-opacity="0.75" />
+    <rect x="160" y="238" width="150" height="14" rx="7" fill="#c7d2fe" fill-opacity="0.6" />
+    
+    <!-- Option Selection Bubbles -->
+    <circle cx="180" cy="300" r="14" fill="#38bdf8" />
+    <rect x="208" y="293" width="120" height="14" rx="7" fill="#ffffff" fill-opacity="0.85" />
+    
+    <circle cx="180" cy="344" r="14" fill="none" stroke="#a5b4fc" stroke-width="3" />
+    <rect x="208" y="337" width="100" height="14" rx="7" fill="#c7d2fe" fill-opacity="0.65" />
+  </g>
+
+  <!-- Glowing Checkmark Badge overlay -->
+  <g filter="url(#dropShadow)">
+    <circle cx="356" cy="356" r="54" fill="#10b981" stroke="#ffffff" stroke-width="6" />
+    <path d="M336 356 L350 370 L378 340" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+
+  <!-- Sparkle stars -->
+  <path d="M120 100 Q120 120 140 120 Q120 120 120 140 Q120 120 100 120 Q120 120 120 100 Z" fill="#38bdf8" opacity="0.9" />
+  <path d="M400 90 Q400 105 415 105 Q400 105 400 120 Q400 105 385 105 Q400 105 400 90 Z" fill="#fbbf24" opacity="0.85" />
+</svg>

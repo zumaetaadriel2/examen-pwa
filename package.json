@@ -1,0 +1,12 @@
+{
+  "name": "examen-pwa",
+  "version": "1.0.0",
+  "description": "PWA Quiz / Evaluador Interactivo Mobile-First",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": ["pwa", "quiz", "mobile-first", "service-worker"],
+  "author": "",
+  "license": "MIT"
+}
