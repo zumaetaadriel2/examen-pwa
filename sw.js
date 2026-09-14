@@ -3,7 +3,7 @@
  * Estrategia de caché para funcionamiento offline e instalación
  */
 
-const CACHE_NAME = 'quizmaster-pwa-v1';
+const CACHE_NAME = 'quizmaster-pwa-v2';
 
 // Recursos críticos necesarios para ejecutar la aplicación sin conexión
 const STATIC_ASSETS = [
@@ -11,6 +11,7 @@ const STATIC_ASSETS = [
   './index.html',
   './styles.css',
   './app.js',
+  './preguntas.json',
   './manifest.json',
   './icons/favicon.svg',
   './icons/icon-192.svg',

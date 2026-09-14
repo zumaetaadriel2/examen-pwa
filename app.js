@@ -1,80 +1,17 @@
 /**
  * QuizMaster PWA - Application Logic
- * Mobile-First Interactive Quiz & PWA Life Cycle
+ * Integración con preguntas.json (Examen Residentado Médico 2026)
+ * Mobile-First Interactive Quiz, Fundamentos & PWA Life Cycle
  */
 
 // =============================================================================
-// 1. Question Bank (Banco de Preguntas)
+// 1. State Management
 // =============================================================================
-const QUIZ_DATA = [
-  {
-    id: 1,
-    category: "PWA & Fundamentos",
-    question: "¿Cuál es el componente principal que permite a una PWA funcionar sin conexión a internet (offline)?",
-    options: [
-      "WebSockets en tiempo real",
-      "Service Worker",
-      "LocalStorage con JSON",
-      "Web Worker estándar"
-    ],
-    correct: 1
-  },
-  {
-    id: 2,
-    category: "Manifiesto Web",
-    question: "¿Qué archivo define el nombre, iconos, color de tema y modo de visualización ('standalone') de una PWA?",
-    options: [
-      "config.xml",
-      "package.json",
-      "manifest.json",
-      "sw-config.js"
-    ],
-    correct: 2
-  },
-  {
-    id: 3,
-    category: "Estrategias de Caché",
-    question: "¿Qué estrategia de caché entrega primero el recurso almacenado en caché y sólo si falla consulta la red?",
-    options: [
-      "Network First (Red primero)",
-      "Cache Only (Solo caché)",
-      "Network Only (Solo red)",
-      "Cache First (Caché primero con fallback a red)"
-    ],
-    correct: 3
-  },
-  {
-    id: 4,
-    category: "Diseño Mobile-First",
-    question: "¿Cuál es el tamaño mínimo recomendado para objetivos táctiles (touch targets) en pantallas de celular?",
-    options: [
-      "Aproximadamente 48px x 48px",
-      "10px x 10px",
-      "24px x 24px",
-      "72px x 72px"
-    ],
-    correct: 0
-  },
-  {
-    id: 5,
-    category: "Ciclo de Vida PWA",
-    question: "¿Qué evento del navegador se intercepta para activar el banner o botón personalizado de instalación?",
-    options: [
-      "onappinstall",
-      "beforeinstallprompt",
-      "pwa:ready",
-      "serviceWorkerActivated"
-    ],
-    correct: 1
-  }
-];
-
-// =============================================================================
-// 2. State Management
-// =============================================================================
+let QUIZ_DATA = [];
 let currentQuestionIndex = 0;
-let userAnswers = new Array(QUIZ_DATA.length).fill(null);
+let userAnswers = [];
 let deferredPrompt = null;
+let isFundamentoVisible = false;
 
 // DOM Elements
 const currentQuestionNumEl = document.getElementById('currentQuestionNum');
@@ -83,6 +20,11 @@ const progressBarEl = document.getElementById('progressBar');
 const questionCategoryEl = document.getElementById('questionCategory');
 const questionTitleEl = document.getElementById('questionTitle');
 const optionsListEl = document.getElementById('optionsList');
+
+const btnFundamento = document.getElementById('btnFundamento');
+const btnFundamentoText = document.getElementById('btnFundamentoText');
+const fundamentoCard = document.getElementById('fundamentoCard');
+const fundamentoText = document.getElementById('fundamentoText');
 
 const btnPrev = document.getElementById('btnPrev');
 const btnNext = document.getElementById('btnNext');
@@ -106,6 +48,26 @@ const toastMessageEl = document.getElementById('toastMessage');
 const toastTextEl = document.getElementById('toastText');
 
 // =============================================================================
+// 2. Load Questions from preguntas.json
+// =============================================================================
+async function loadQuestions() {
+  try {
+    const response = await fetch('./preguntas.json');
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    QUIZ_DATA = await response.json();
+    userAnswers = new Array(QUIZ_DATA.length).fill(null);
+    totalQuestionsNumEl.textContent = QUIZ_DATA.length;
+    renderCurrentQuestion();
+  } catch (error) {
+    console.error('Error cargando preguntas.json:', error);
+    questionTitleEl.textContent = 'Error al cargar las preguntas del examen. Asegúrate de tener conexión o haber cargado la app previamente.';
+    showToast('⚠️ No se pudieron cargar las preguntas');
+  }
+}
+
+// =============================================================================
 // 3. UI Rendering Functions
 // =============================================================================
 
@@ -113,6 +75,8 @@ const toastTextEl = document.getElementById('toastText');
  * Render current question based on currentQuestionIndex
  */
 function renderCurrentQuestion() {
+  if (!QUIZ_DATA || QUIZ_DATA.length === 0) return;
+
   const currentQ = QUIZ_DATA[currentQuestionIndex];
   const totalQ = QUIZ_DATA.length;
 
@@ -123,15 +87,21 @@ function renderCurrentQuestion() {
   progressBarEl.style.width = `${progressPercent}%`;
   progressBarEl.setAttribute('aria-valuenow', progressPercent);
 
-  // 2. Update Question Content with soft animation
-  questionCategoryEl.textContent = currentQ.category;
-  questionTitleEl.textContent = currentQ.question;
+  // 2. Update Question Content
+  questionCategoryEl.textContent = `Pregunta ${currentQ.id} • Residentado Médico`;
+  questionTitleEl.textContent = currentQ.pregunta;
 
-  // 3. Render Large Touch-Friendly Options
+  // 3. Reset Fundamento Card to collapsed state
+  hideFundamento();
+  fundamentoText.textContent = currentQ.fundamento || 'No hay fundamento disponible para esta pregunta.';
+
+  // 4. Render Large Touch-Friendly Options
   optionsListEl.innerHTML = '';
   const optionLetters = ['A', 'B', 'C', 'D'];
 
-  currentQ.options.forEach((optionText, index) => {
+  currentQ.opciones.forEach((rawOptionText, index) => {
+    // Strip leading "A. ", "B. ", etc. if already present
+    const cleanOptionText = rawOptionText.replace(/^[A-D]\.\s*/, '');
     const isSelected = userAnswers[currentQuestionIndex] === index;
 
     const optionBtn = document.createElement('button');
@@ -143,7 +113,7 @@ function renderCurrentQuestion() {
 
     optionBtn.innerHTML = `
       <div class="option-badge">${optionLetters[index]}</div>
-      <span class="option-text">${optionText}</span>
+      <span class="option-text">${cleanOptionText}</span>
       <div class="option-radio" aria-hidden="true"></div>
     `;
 
@@ -151,11 +121,9 @@ function renderCurrentQuestion() {
     optionsListEl.appendChild(optionBtn);
   });
 
-  // 4. Update Navigation Controls
-  // Anterior button
+  // 5. Update Navigation Controls
   btnPrev.disabled = currentQuestionIndex === 0;
 
-  // Next vs Finish button
   const isLastQuestion = currentQuestionIndex === totalQ - 1;
   if (isLastQuestion) {
     btnNext.style.display = 'none';
@@ -172,7 +140,6 @@ function renderCurrentQuestion() {
 function handleSelectOption(selectedIndex) {
   userAnswers[currentQuestionIndex] = selectedIndex;
 
-  // Update classes immediately for instant touch response
   const optionCards = optionsListEl.querySelectorAll('.option-card');
   optionCards.forEach((card, idx) => {
     const isNowSelected = idx === selectedIndex;
@@ -180,14 +147,40 @@ function handleSelectOption(selectedIndex) {
     card.setAttribute('aria-checked', isNowSelected ? 'true' : 'false');
   });
 
-  // Provide tactile vibration if supported on mobile device
   if ('vibrate' in navigator) {
     navigator.vibrate(25);
   }
 }
 
 /**
- * Navigate to next question
+ * Toggle Fundamento (Explicación Oficial)
+ */
+function toggleFundamento() {
+  if (isFundamentoVisible) {
+    hideFundamento();
+  } else {
+    showFundamento();
+  }
+}
+
+function showFundamento() {
+  isFundamentoVisible = true;
+  fundamentoCard.hidden = false;
+  btnFundamento.classList.add('active');
+  btnFundamento.setAttribute('aria-expanded', 'true');
+  btnFundamentoText.textContent = 'Ocultar fundamento';
+}
+
+function hideFundamento() {
+  isFundamentoVisible = false;
+  fundamentoCard.hidden = true;
+  btnFundamento.classList.remove('active');
+  btnFundamento.setAttribute('aria-expanded', 'false');
+  btnFundamentoText.textContent = 'Ver fundamento';
+}
+
+/**
+ * Navigation Handlers
  */
 function handleNext() {
   if (currentQuestionIndex < QUIZ_DATA.length - 1) {
@@ -197,9 +190,6 @@ function handleNext() {
   }
 }
 
-/**
- * Navigate to previous question
- */
 function handlePrev() {
   if (currentQuestionIndex > 0) {
     currentQuestionIndex--;
@@ -212,17 +202,15 @@ function handlePrev() {
  * Finalize quiz and compute results
  */
 function handleFinishQuiz() {
-  // Check if there are unanswered questions
   const unansweredCount = userAnswers.filter(ans => ans === null).length;
   if (unansweredCount > 0) {
-    const confirmFinish = confirm(`Tienes ${unansweredCount} pregunta(s) sin responder. ¿Deseas finalizar la prueba de todos modos?`);
+    const confirmFinish = confirm(`Tienes ${unansweredCount} pregunta(s) sin responder de ${QUIZ_DATA.length}. ¿Deseas finalizar la prueba de todos modos?`);
     if (!confirmFinish) return;
   }
 
-  // Calculate scores
   let correctCount = 0;
   QUIZ_DATA.forEach((q, idx) => {
-    if (userAnswers[idx] === q.correct) {
+    if (userAnswers[idx] === q.respuestaCorrecta) {
       correctCount++;
     }
   });
@@ -231,7 +219,6 @@ function handleFinishQuiz() {
   const incorrectCount = total - correctCount;
   const percentage = Math.round((correctCount / total) * 100);
 
-  // Populate results view
   scorePercentEl.textContent = `${percentage}%`;
   scoreFractionEl.textContent = `${correctCount} de ${total} preguntas correctas`;
   statCorrectEl.textContent = correctCount;
@@ -249,7 +236,6 @@ function handleFinishQuiz() {
     statStatusEl.style.color = "var(--warning)";
   }
 
-  // Switch views
   quizSection.style.display = 'none';
   resultsSection.classList.add('active');
   resultsSection.setAttribute('aria-hidden', 'false');
@@ -302,7 +288,6 @@ function updateNetworkStatus() {
 window.addEventListener('online', updateNetworkStatus);
 window.addEventListener('offline', updateNetworkStatus);
 
-// Set initial status without toast alert on boot
 if (!navigator.onLine) {
   networkStatusEl.classList.add('offline');
   networkTextEl.textContent = 'Sin conexión';
@@ -312,25 +297,19 @@ if (!navigator.onLine) {
 // 6. PWA Installation Event Handling
 // =============================================================================
 window.addEventListener('beforeinstallprompt', (e) => {
-  // Prevent the default mini-infobar or dialog
   e.preventDefault();
-  // Stash the event so it can be triggered later
   deferredPrompt = e;
-  // Show install button
   btnInstall.classList.add('visible');
 });
 
 btnInstall.addEventListener('click', async () => {
   if (!deferredPrompt) return;
 
-  // Show the install prompt
   deferredPrompt.prompt();
-  // Wait for the user to respond to the prompt
   const { outcome } = await deferredPrompt.userChoice;
   if (outcome === 'accepted') {
     showToast('🎉 ¡Gracias por instalar QuizMaster PWA!');
   }
-  // Clear prompt
   deferredPrompt = null;
   btnInstall.classList.remove('visible');
 });
@@ -348,7 +327,7 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker
       .register('./sw.js')
       .then((registration) => {
-        console.log('[PWA] Service Worker registrado exitosamente con scope:', registration.scope);
+        console.log('[PWA] Service Worker registrado con scope:', registration.scope);
       })
       .catch((error) => {
         console.error('[PWA] Error al registrar Service Worker:', error);
@@ -359,10 +338,11 @@ if ('serviceWorker' in navigator) {
 // =============================================================================
 // 8. Event Listeners & Initialization
 // =============================================================================
+btnFundamento.addEventListener('click', toggleFundamento);
 btnPrev.addEventListener('click', handlePrev);
 btnNext.addEventListener('click', handleNext);
 btnFinish.addEventListener('click', handleFinishQuiz);
 btnRestart.addEventListener('click', handleRestartQuiz);
 
-// Initialize First Question
-renderCurrentQuestion();
+// Initialize Questions
+loadQuestions();

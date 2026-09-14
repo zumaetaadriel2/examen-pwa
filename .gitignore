@@ -34,3 +34,6 @@ Thumbs.db
 .cache/
 dist/
 build/
+
+# Other
+example_exam/
