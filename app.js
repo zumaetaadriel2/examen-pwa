@@ -1,6 +1,6 @@
 /**
  * QuizMaster PWA - Application Logic
- * Integración Examen Residentado Médico 2026 (200 preguntas)
+ * Integración con Gemini 2.5 Flash API (Carga de PDF y Generación de Exámenes)
  * Retroalimentación visual inmediata (Verde/Rojo), Fundamento Automático
  * y Módulo de Bolsa de Repaso Activo (Active Recall) con localStorage
  */
@@ -15,6 +15,7 @@ let userAnswers = [];
 let isRecallMode = false;
 let isFundamentoVisible = false;
 let deferredPrompt = null;
+let selectedPdfFile = null;
 
 // DOM Elements
 const currentQuestionNumEl = document.getElementById('currentQuestionNum');
@@ -42,6 +43,25 @@ const btnReviewFailed = document.getElementById('btnReviewFailed');
 const reviewCountBadge = document.getElementById('reviewCountBadge');
 const btnInstall = document.getElementById('btnInstall');
 
+// Modal Elements (Carga de PDF con Gemini)
+const btnOpenUploadModal = document.getElementById('btnOpenUploadModal');
+const modalUploadPdf = document.getElementById('modalUploadPdf');
+const btnCloseModal = document.getElementById('btnCloseModal');
+const btnCancelUpload = document.getElementById('btnCancelUpload');
+const dropZonePdf = document.getElementById('dropZonePdf');
+const inputPdfFile = document.getElementById('inputPdfFile');
+const selectedFileInfo = document.getElementById('selectedFileInfo');
+const selectedFileName = document.getElementById('selectedFileName');
+const selectedFileSize = document.getElementById('selectedFileSize');
+const btnRemoveFile = document.getElementById('btnRemoveFile');
+const chkAppendQuestions = document.getElementById('chkAppendQuestions');
+const uploadErrorBanner = document.getElementById('uploadErrorBanner');
+const uploadErrorText = document.getElementById('uploadErrorText');
+const uploadLoadingState = document.getElementById('uploadLoadingState');
+const loadingStatusText = document.getElementById('loadingStatusText');
+const btnGenerateExam = document.getElementById('btnGenerateExam');
+
+// Results & Toasts
 const quizSection = document.getElementById('quizSection');
 const resultsSection = document.getElementById('resultsSection');
 const resultsTitleEl = document.getElementById('resultsTitle');
@@ -63,10 +83,8 @@ const toastTextEl = document.getElementById('toastText');
 // 2. Active Recall (Bolsa de Repaso) LocalStorage Persistence
 // =============================================================================
 const STORAGE_KEY_REPASO = 'bolsaRepaso';
+const STORAGE_KEY_CUSTOM_EXAM = 'customExamQuestions';
 
-/**
- * Obtener la lista de IDs de preguntas falladas guardadas en localStorage
- */
 function getBolsaRepasoIds() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_REPASO);
@@ -77,9 +95,6 @@ function getBolsaRepasoIds() {
   }
 }
 
-/**
- * Guardar un ID en la bolsa de repaso (sin duplicados)
- */
 function addToBolsaRepaso(questionId) {
   const ids = getBolsaRepasoIds();
   if (!ids.includes(questionId)) {
@@ -89,9 +104,6 @@ function addToBolsaRepaso(questionId) {
   updateRecallBadges();
 }
 
-/**
- * Remover un ID de la bolsa de repaso (cuando el alumno la responde bien en repaso)
- */
 function removeFromBolsaRepaso(questionId) {
   let ids = getBolsaRepasoIds();
   if (ids.includes(questionId)) {
@@ -101,9 +113,6 @@ function removeFromBolsaRepaso(questionId) {
   updateRecallBadges();
 }
 
-/**
- * Actualizar contadores visuales de la bolsa de repaso
- */
 function updateRecallBadges() {
   const count = getBolsaRepasoIds().length;
   if (headerRecallCount) {
@@ -118,10 +127,30 @@ function updateRecallBadges() {
 }
 
 // =============================================================================
-// 3. Load Questions from preguntas.json
+// 3. Load Questions (preguntas.json o Custom LocalStorage)
 // =============================================================================
 async function loadQuestions() {
   try {
+    // Si el usuario generó un examen previamente desde un PDF, cargarlo
+    const savedCustom = localStorage.getItem(STORAGE_KEY_CUSTOM_EXAM);
+    if (savedCustom) {
+      try {
+        const parsed = JSON.parse(savedCustom);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          FULL_QUIZ_DATA = parsed;
+          ACTIVE_QUIZ_DATA = [...FULL_QUIZ_DATA];
+          userAnswers = new Array(ACTIVE_QUIZ_DATA.length).fill(null);
+          updateRecallBadges();
+          renderCurrentQuestion();
+          showToast(`📚 Examen personalizado cargado (${FULL_QUIZ_DATA.length} preguntas)`);
+          return;
+        }
+      } catch (e) {
+        console.warn('Error leyendo examen personalizado:', e);
+      }
+    }
+
+    // Carga predeterminada del examen base oficial (200 preguntas)
     const response = await fetch('./preguntas.json');
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
@@ -134,7 +163,7 @@ async function loadQuestions() {
     renderCurrentQuestion();
   } catch (error) {
     console.error('Error cargando preguntas.json:', error);
-    questionTitleEl.textContent = 'Error al cargar las preguntas del examen. Comprueba que el servidor esté activo.';
+    questionTitleEl.textContent = 'Error al cargar las preguntas. Comprueba que el servidor esté activo.';
     showToast('⚠️ No se pudieron cargar las preguntas');
   }
 }
@@ -143,9 +172,6 @@ async function loadQuestions() {
 // 4. UI Rendering Functions
 // =============================================================================
 
-/**
- * Renderiza la pregunta actual con sus opciones y estado
- */
 function renderCurrentQuestion() {
   if (!ACTIVE_QUIZ_DATA || ACTIVE_QUIZ_DATA.length === 0) return;
 
@@ -239,14 +265,13 @@ function renderCurrentQuestion() {
 
 /**
  * Manejo de clic/tap en una opción de respuesta:
- * - Resalta verde si es correcta
- * - Resalta rojo la elegida y verde la correcta si es incorrecta
+ * - Verde si es correcta
+ * - Rojo la elegida y verde la correcta si es incorrecta
  * - Deshabilita todas las opciones de la pregunta
  * - Despliega automáticamente el fundamento
- * - Guarda en bolsaRepaso (Active Recall) si falló, o remueve si acertó en modo repaso
+ * - Guarda en bolsaRepaso si falló, o remueve si acertó en modo repaso
  */
 function handleSelectOption(selectedIndex) {
-  // Evitar cambios si ya fue respondida
   if (userAnswers[currentQuestionIndex] !== null) return;
 
   const currentQ = ACTIVE_QUIZ_DATA[currentQuestionIndex];
@@ -255,9 +280,8 @@ function handleSelectOption(selectedIndex) {
   const isCorrect = (selectedIndex === currentQ.respuestaCorrecta);
   const cards = optionsListEl.querySelectorAll('.option-card');
 
-  // Aplicar clases de validación inmediata
   cards.forEach((card, idx) => {
-    card.disabled = true; // Deshabilitar para evitar cambios
+    card.disabled = true; // Deshabilitar para evitar cambios posteriores
 
     if (idx === selectedIndex) {
       card.classList.add('selected');
@@ -267,7 +291,6 @@ function handleSelectOption(selectedIndex) {
         card.classList.add('incorrect');
       }
     } else if (idx === currentQ.respuestaCorrecta) {
-      // Mostrar en verde la opción que era la correcta
       card.classList.add('correct');
     }
   });
@@ -286,15 +309,12 @@ function handleSelectOption(selectedIndex) {
   // Desplegar automáticamente el contenedor de fundamento
   showFundamento();
 
-  // Vibración táctil si el dispositivo la soporta
+  // Vibración táctil háptica
   if ('vibrate' in navigator) {
     navigator.vibrate(isCorrect ? 30 : [50, 40, 50]);
   }
 }
 
-/**
- * Control del contenedor de Fundamento
- */
 function toggleFundamento() {
   if (isFundamentoVisible) {
     hideFundamento();
@@ -319,9 +339,6 @@ function hideFundamento() {
   btnFundamentoText.textContent = 'Ver fundamento';
 }
 
-/**
- * Navegación entre preguntas
- */
 function handleNext() {
   if (currentQuestionIndex < ACTIVE_QUIZ_DATA.length - 1) {
     currentQuestionIndex++;
@@ -338,9 +355,6 @@ function handlePrev() {
   }
 }
 
-/**
- * Finalizar Examen y Desplegar Resultados
- */
 function handleFinishQuiz() {
   const unansweredCount = userAnswers.filter(ans => ans === null).length;
   if (unansweredCount > 0) {
@@ -367,10 +381,10 @@ function handleFinishQuiz() {
 
   if (isRecallMode) {
     resultsTitleEl.textContent = "¡Sesión de Repaso Finalizada!";
-    resultsSubtitleEl.textContent = `Has repasado ${total} preguntas que tenías pendientes.`;
+    resultsSubtitleEl.textContent = `Has repasado ${total} preguntas de tu bolsa activa.`;
   } else {
     resultsTitleEl.textContent = "¡Examen Finalizado!";
-    resultsSubtitleEl.textContent = "Has completado la evaluación del Residentado Médico 2026.";
+    resultsSubtitleEl.textContent = "Has completado todas las preguntas evaluadas.";
   }
 
   if (percentage >= 80) {
@@ -392,9 +406,6 @@ function handleFinishQuiz() {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-/**
- * Iniciar sesión de Active Recall con las preguntas falladas
- */
 function startActiveRecall() {
   const failedIds = getBolsaRepasoIds();
 
@@ -403,9 +414,7 @@ function startActiveRecall() {
     return;
   }
 
-  // Filtrar banco completo según los IDs guardados
   const failedQuestions = FULL_QUIZ_DATA.filter(q => failedIds.includes(q.id));
-
   if (failedQuestions.length === 0) {
     showToast('No se encontraron las preguntas seleccionadas.');
     return;
@@ -426,9 +435,6 @@ function startActiveRecall() {
   showToast(`🎯 Modo Repaso Activo: ${failedQuestions.length} pregunta(s)`);
 }
 
-/**
- * Salir del modo de Repaso Activo y regresar al examen completo
- */
 function exitActiveRecall() {
   isRecallMode = false;
   ACTIVE_QUIZ_DATA = [...FULL_QUIZ_DATA];
@@ -445,9 +451,6 @@ function exitActiveRecall() {
   showToast('📋 Volviste al Examen Completo');
 }
 
-/**
- * Reiniciar examen completo desde cero
- */
 function handleRestartQuiz() {
   isRecallMode = false;
   ACTIVE_QUIZ_DATA = [...FULL_QUIZ_DATA];
@@ -464,7 +467,195 @@ function handleRestartQuiz() {
 }
 
 // =============================================================================
-// 5. Toast Notifications
+// 5. PDF Upload & Gemini 2.5 Flash Generation Handlers
+// =============================================================================
+
+function openUploadModal() {
+  modalUploadPdf.style.display = 'flex';
+  modalUploadPdf.setAttribute('aria-hidden', 'false');
+  resetUploadModal();
+}
+
+function closeUploadModal() {
+  modalUploadPdf.style.display = 'none';
+  modalUploadPdf.setAttribute('aria-hidden', 'true');
+  resetUploadModal();
+}
+
+function resetUploadModal() {
+  selectedPdfFile = null;
+  inputPdfFile.value = '';
+  selectedFileInfo.style.display = 'none';
+  dropZonePdf.style.display = 'flex';
+  uploadErrorBanner.style.display = 'none';
+  uploadLoadingState.style.display = 'none';
+  btnGenerateExam.disabled = true;
+  btnCancelUpload.disabled = false;
+  btnCloseModal.disabled = false;
+}
+
+function handleFileChosen(file) {
+  if (!file) return;
+
+  const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+  if (!isPdf) {
+    showUploadError('Por favor selecciona únicamente archivos con extensión .pdf');
+    return;
+  }
+
+  selectedPdfFile = file;
+  selectedFileName.textContent = file.name;
+  const sizeKb = (file.size / 1024).toFixed(1);
+  selectedFileSize.textContent = `(${sizeKb > 1024 ? (sizeKb / 1024).toFixed(1) + ' MB' : sizeKb + ' KB'})`;
+
+  uploadErrorBanner.style.display = 'none';
+  dropZonePdf.style.display = 'none';
+  selectedFileInfo.style.display = 'flex';
+  btnGenerateExam.disabled = false;
+}
+
+function showUploadError(msg) {
+  uploadErrorText.textContent = msg;
+  uploadErrorBanner.style.display = 'block';
+  uploadLoadingState.style.display = 'none';
+  btnGenerateExam.disabled = false;
+  btnCancelUpload.disabled = false;
+  btnCloseModal.disabled = false;
+}
+
+// Drag & drop handlers
+dropZonePdf.addEventListener('click', () => inputPdfFile.click());
+inputPdfFile.addEventListener('change', (e) => {
+  if (e.target.files && e.target.files[0]) {
+    handleFileChosen(e.target.files[0]);
+  }
+});
+
+dropZonePdf.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZonePdf.classList.add('dragover');
+});
+
+dropZonePdf.addEventListener('dragleave', () => {
+  dropZonePdf.classList.remove('dragover');
+});
+
+dropZonePdf.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZonePdf.classList.remove('dragover');
+  if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+    handleFileChosen(e.dataTransfer.files[0]);
+  }
+});
+
+btnRemoveFile.addEventListener('click', (e) => {
+  e.stopPropagation();
+  resetUploadModal();
+});
+
+btnOpenUploadModal.addEventListener('click', openUploadModal);
+btnCloseModal.addEventListener('click', closeUploadModal);
+btnCancelUpload.addEventListener('click', closeUploadModal);
+
+// Close on backdrop click
+modalUploadPdf.addEventListener('click', (e) => {
+  if (e.target === modalUploadPdf && uploadLoadingState.style.display === 'none') {
+    closeUploadModal();
+  }
+});
+
+/**
+ * Enviar PDF al endpoint del servidor y generar preguntas con Gemini 2.5 Flash
+ */
+async function generateExamFromPdf() {
+  if (!selectedPdfFile) return;
+
+  const formData = new FormData();
+  formData.append('pdf', selectedPdfFile);
+
+  // UI en estado de carga
+  uploadErrorBanner.style.display = 'none';
+  uploadLoadingState.style.display = 'flex';
+  btnGenerateExam.disabled = true;
+  btnCancelUpload.disabled = true;
+  btnCloseModal.disabled = true;
+
+  // Secuencia de mensajes informativos en el loader
+  loadingStatusText.textContent = "Subiendo documento al servidor...";
+  const statusSteps = [
+    { time: 2500, text: "Analizando contenido con Gemini 2.5 Flash..." },
+    { time: 7000, text: "Estructurando opciones y fundamentos clínicos..." },
+    { time: 14000, text: "Validando formato de evaluación interactiva..." }
+  ];
+  const stepTimeouts = statusSteps.map(step =>
+    setTimeout(() => {
+      loadingStatusText.textContent = step.text;
+    }, step.time)
+  );
+
+  try {
+    const response = await fetch('/api/generar-examen', {
+      method: 'POST',
+      body: formData
+    });
+
+    stepTimeouts.forEach(clearTimeout);
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      throw new Error(result.error || 'Error al procesar el archivo con Gemini.');
+    }
+
+    const newQuestions = result.preguntas;
+    if (!Array.isArray(newQuestions) || newQuestions.length === 0) {
+      throw new Error('Gemini no generó preguntas válidas para este documento.');
+    }
+
+    const isAppend = chkAppendQuestions.checked;
+    if (isAppend) {
+      // Reindexar preguntas añadidas para que los IDs sean únicos
+      const currentCount = FULL_QUIZ_DATA.length;
+      const reindexed = newQuestions.map((q, idx) => ({
+        ...q,
+        id: currentCount + idx + 1
+      }));
+      FULL_QUIZ_DATA = [...FULL_QUIZ_DATA, ...reindexed];
+    } else {
+      FULL_QUIZ_DATA = newQuestions;
+    }
+
+    // Persistir en localStorage
+    localStorage.setItem(STORAGE_KEY_CUSTOM_EXAM, JSON.stringify(FULL_QUIZ_DATA));
+
+    // Reiniciar estado con las nuevas preguntas
+    isRecallMode = false;
+    ACTIVE_QUIZ_DATA = [...FULL_QUIZ_DATA];
+    userAnswers = new Array(ACTIVE_QUIZ_DATA.length).fill(null);
+    currentQuestionIndex = 0;
+
+    recallModeBanner.style.display = 'none';
+    resultsSection.classList.remove('active');
+    resultsSection.setAttribute('aria-hidden', 'true');
+    quizSection.style.display = 'flex';
+
+    renderCurrentQuestion();
+    closeUploadModal();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    showToast(`🎉 ¡Examen generado con éxito! ${newQuestions.length} preguntas añadidas.`);
+
+  } catch (error) {
+    stepTimeouts.forEach(clearTimeout);
+    console.error('Error al generar examen:', error);
+    showUploadError(error.message || 'Error al comunicarse con el servidor o la API de Gemini.');
+  }
+}
+
+btnGenerateExam.addEventListener('click', generateExamFromPdf);
+
+// =============================================================================
+// 6. Toast Notifications & Network
 // =============================================================================
 let toastTimeout;
 function showToast(message, duration = 3000) {
@@ -477,25 +668,21 @@ function showToast(message, duration = 3000) {
   }, duration);
 }
 
-// =============================================================================
-// 6. Network Connectivity Listeners
-// =============================================================================
 function updateNetworkStatus() {
   const isOnline = navigator.onLine;
   if (isOnline) {
     networkStatusEl.classList.remove('offline');
     networkTextEl.textContent = 'En línea';
-    showToast('🟢 Conexión a internet restablecida');
+    showToast('🟢 Conexión restablecida');
   } else {
     networkStatusEl.classList.add('offline');
     networkTextEl.textContent = 'Sin conexión';
-    showToast('⚠️ Modo offline activado. La app sigue funcionando.');
+    showToast('⚠️ Modo offline activado');
   }
 }
 
 window.addEventListener('online', updateNetworkStatus);
 window.addEventListener('offline', updateNetworkStatus);
-
 if (!navigator.onLine) {
   networkStatusEl.classList.add('offline');
   networkTextEl.textContent = 'Sin conexión';
@@ -512,7 +699,6 @@ window.addEventListener('beforeinstallprompt', (e) => {
 
 btnInstall.addEventListener('click', async () => {
   if (!deferredPrompt) return;
-
   deferredPrompt.prompt();
   const { outcome } = await deferredPrompt.userChoice;
   if (outcome === 'accepted') {
@@ -553,6 +739,7 @@ btnFinish.addEventListener('click', handleFinishQuiz);
 btnRestart.addEventListener('click', handleRestartQuiz);
 btnReviewFailed.addEventListener('click', startActiveRecall);
 btnExitRecall.addEventListener('click', exitActiveRecall);
+
 if (btnHeaderRecall) {
   btnHeaderRecall.addEventListener('click', () => {
     const failedIds = getBolsaRepasoIds();
@@ -564,5 +751,5 @@ if (btnHeaderRecall) {
   });
 }
 
-// Iniciar carga de datos
+// Iniciar carga de preguntas
 loadQuestions();

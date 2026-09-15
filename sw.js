@@ -3,7 +3,7 @@
  * Estrategia de caché para funcionamiento offline e instalación
  */
 
-const CACHE_NAME = 'quizmaster-pwa-v2';
+const CACHE_NAME = 'quizmaster-pwa-v3';
 
 // Recursos críticos necesarios para ejecutar la aplicación sin conexión
 const STATIC_ASSETS = [
@@ -20,12 +20,11 @@ const STATIC_ASSETS = [
 
 // 1. Evento Install: Pre-almacenamiento en caché de la Shell de la aplicación
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       console.log('[SW] Pre-caching recursos esenciales');
       return cache.addAll(STATIC_ASSETS);
-    }).then(() => {
-      return self.skipWaiting();
     })
   );
 });
@@ -48,42 +47,42 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// 3. Evento Fetch: Estrategia Cache First con fallback a Red
+// 3. Evento Fetch: Estrategia Network-First para desarrollo (siempre fresco si hay red, fallback a caché offline)
 self.addEventListener('fetch', (event) => {
-  // Ignorar peticiones que no sean GET o esquemas no soportados (ej. chrome-extension)
   if (event.request.method !== 'GET' || !event.request.url.startsWith('http')) {
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      // Si el recurso ya está en caché, servirlo inmediatamente
-      if (cachedResponse) {
-        return cachedResponse;
-      }
+  // Las peticiones al API no deben cachearse con fallback estático
+  if (event.request.url.includes('/api/')) {
+    return;
+  }
 
-      // Si no está en caché, buscar en la red
-      return fetch(event.request)
-        .then((networkResponse) => {
-          // Si la respuesta es válida y del mismo origen, guardarla en caché dinámicamente
-          if (
-            networkResponse &&
-            networkResponse.status === 200 &&
-            event.request.url.startsWith(self.location.origin)
-          ) {
-            const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache);
-            });
+  event.respondWith(
+    fetch(event.request)
+      .then((networkResponse) => {
+        if (
+          networkResponse &&
+          networkResponse.status === 200 &&
+          event.request.url.startsWith(self.location.origin)
+        ) {
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+        }
+        return networkResponse;
+      })
+      .catch(() => {
+        // Modo offline: devolver desde caché
+        return caches.match(event.request).then((cachedResponse) => {
+          if (cachedResponse) {
+            return cachedResponse;
           }
-          return networkResponse;
-        })
-        .catch(() => {
-          // Si falla la red y es una navegación HTML, servir la página principal offline
           if (event.request.mode === 'navigate') {
             return caches.match('./index.html');
           }
         });
-    })
+      })
   );
 });

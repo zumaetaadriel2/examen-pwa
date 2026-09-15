@@ -6,7 +6,18 @@
   "scripts": {
     "start": "node server.js"
   },
-  "keywords": ["pwa", "quiz", "mobile-first", "service-worker"],
+  "keywords": [
+    "pwa",
+    "quiz",
+    "mobile-first",
+    "service-worker"
+  ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^2.22.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-fileupload": "^1.5.2"
+  }
 }
