@@ -144,7 +144,6 @@ const selectedFileInfo = document.getElementById('selectedFileInfo');
 const selectedFileName = document.getElementById('selectedFileName');
 const selectedFileSize = document.getElementById('selectedFileSize');
 const btnRemoveFile = document.getElementById('btnRemoveFile');
-const chkAppendQuestions = document.getElementById('chkAppendQuestions');
 const uploadErrorBanner = document.getElementById('uploadErrorBanner');
 const uploadErrorText = document.getElementById('uploadErrorText');
 const uploadLoadingState = document.getElementById('uploadLoadingState');
@@ -1239,7 +1238,7 @@ async function generateExamFromPdf() {
 
   loadingStatusText.textContent = "Subiendo documento al servidor...";
   const statusSteps = [
-    { time: 2500, text: "Analizando contenido con Gemini 2.5 Flash..." },
+    { time: 2500, text: "Analizando contenido con Gemini IA..." },
     { time: 7000, text: "Estructurando opciones y fundamentos clínicos..." },
     { time: 14000, text: "Validando formato multi-examen..." }
   ];

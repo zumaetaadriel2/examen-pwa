@@ -94,73 +94,91 @@ Para cada pregunta debes:
    - "correcta": Justificación clínica profunda de por qué la opción marcada es la correcta basada en guías clínicas y fisiopatología.
    - "descarte": Explicación sintética de por qué las alternativas restantes son incorrectas o contraindicadas.`;
 
-    // Llamada a Gemini 2.5 Flash con Structured Outputs enriquecido
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [
-        {
-          inlineData: {
-            mimeType: 'application/pdf',
-            data: pdfBase64
-          }
-        },
-        promptText
-      ],
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              id: { type: Type.INTEGER },
-              pregunta: { type: Type.STRING },
-              opciones: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-              },
-              respuestaCorrecta: { type: Type.INTEGER },
-              especialidad: {
-                type: Type.STRING,
-                description: 'Especialidad obligatoria de Medicina Interna: Gastroenterología, Cardiología, Neumología, Nefrología, Hematología, Endocrinología, Reumatología, Infectología'
-              },
-              anio: {
-                type: Type.STRING,
-                description: 'Año de la pregunta (ej. 2024, 2025, 2026)'
-              },
-              dificultad: {
-                type: Type.STRING,
-                description: 'Nivel de dificultad médica: Fácil, Intermedio, Difícil'
-              },
-              fundamentoDetallado: {
-                type: Type.OBJECT,
-                properties: {
-                  correcta: {
-                    type: Type.STRING,
-                    description: 'Explicación de por qué la opción es la correcta'
-                  },
-                  descarte: {
-                    type: Type.STRING,
-                    description: 'Explicación de por qué se descartan las demás alternativas'
-                  }
-                },
-                required: ['correcta', 'descarte']
-              }
+    // Modelo Gemini activo (actualizado a gemini-3.6-flash con fallback a gemini-flash-latest)
+    const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+    const fallbackModel = 'gemini-flash-latest';
+
+    const generateConfig = {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            id: { type: Type.INTEGER },
+            pregunta: { type: Type.STRING },
+            opciones: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING }
             },
-            required: [
-              'id',
-              'pregunta',
-              'opciones',
-              'respuestaCorrecta',
-              'especialidad',
-              'anio',
-              'dificultad',
-              'fundamentoDetallado'
-            ]
-          }
+            respuestaCorrecta: { type: Type.INTEGER },
+            especialidad: {
+              type: Type.STRING,
+              description: 'Especialidad obligatoria de Medicina Interna: Gastroenterología, Cardiología, Neumología, Nefrología, Hematología, Endocrinología, Reumatología, Infectología'
+            },
+            anio: {
+              type: Type.STRING,
+              description: 'Año de la pregunta (ej. 2024, 2025, 2026)'
+            },
+            dificultad: {
+              type: Type.STRING,
+              description: 'Nivel de dificultad médica: Fácil, Intermedio, Difícil'
+            },
+            fundamentoDetallado: {
+              type: Type.OBJECT,
+              properties: {
+                correcta: {
+                  type: Type.STRING,
+                  description: 'Explicación de por qué la opción es la correcta'
+                },
+                descarte: {
+                  type: Type.STRING,
+                  description: 'Explicación de por qué se descartan las demás alternativas'
+                }
+              },
+              required: ['correcta', 'descarte']
+            }
+          },
+          required: [
+            'id',
+            'pregunta',
+            'opciones',
+            'respuestaCorrecta',
+            'especialidad',
+            'anio',
+            'dificultad',
+            'fundamentoDetallado'
+          ]
         }
       }
-    });
+    };
+
+    const requestContents = [
+      {
+        inlineData: {
+          mimeType: 'application/pdf',
+          data: pdfBase64
+        }
+      },
+      promptText
+    ];
+
+    let response;
+    try {
+      console.log(`[Gemini] Solicitando generación con modelo: "${primaryModel}"...`);
+      response = await ai.models.generateContent({
+        model: primaryModel,
+        contents: requestContents,
+        config: generateConfig
+      });
+    } catch (primaryErr) {
+      console.warn(`[Gemini] Advertencia con modelo "${primaryModel}": ${primaryErr.message}. Reintentando con modelo fallback "${fallbackModel}"...`);
+      response = await ai.models.generateContent({
+        model: fallbackModel,
+        contents: requestContents,
+        config: generateConfig
+      });
+    }
 
     const generatedQuestions = JSON.parse(response.text);
 
