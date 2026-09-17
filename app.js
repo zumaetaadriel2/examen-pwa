@@ -1,34 +1,57 @@
 /**
- * QuizMaster PWA - Application Logic
- * Integración con Gemini 2.5 Flash API (Carga de PDF y Generación de Exámenes)
- * Retroalimentación visual inmediata (Verde/Rojo), Fundamento Automático
- * y Módulo de Bolsa de Repaso Activo (Active Recall) con localStorage
+ * QuizMaster PWA - Multi-Examen Platform
+ * Dashboard Principal (#view-home), Aleatorización Inteligente con Persistencia,
+ * Bolsas de Active Recall Independientes, Detección Offline para Gemini 2.5 Flash
  */
 
 // =============================================================================
-// 1. State Management & Variables
+// 1. Constantes y Claves de LocalStorage
 // =============================================================================
-let FULL_QUIZ_DATA = [];
-let ACTIVE_QUIZ_DATA = [];
+const STORAGE_KEY_CUSTOM_EXAMS = 'pwa_custom_exams';
+const STORAGE_KEY_RANDOM_MODE = 'pwa_random_mode';
+const OFFICIAL_EXAM_ID = 'residentado_2026';
+
+// Estado Global
+let ALL_EXAMS = [];              // Lista de todos los exámenes (oficial + personalizados)
+let currentExam = null;          // Examen actualmente seleccionado
+let currentQuestions = [];       // Preguntas del examen en curso (original o barajadas)
 let currentQuestionIndex = 0;
-let userAnswers = [];
 let isRecallMode = false;
 let isFundamentoVisible = false;
 let deferredPrompt = null;
 let selectedPdfFile = null;
 
-// DOM Elements
+// =============================================================================
+// 2. Elementos del DOM
+// =============================================================================
+// Vistas Principales
+const viewHome = document.getElementById('view-home');
+const quizSection = document.getElementById('quizSection');
+const resultsSection = document.getElementById('resultsSection');
+
+// Cabecera y Navegación
+const btnBackHome = document.getElementById('btnBackHome');
+const btnInstall = document.getElementById('btnInstall');
+const btnOpenUploadModal = document.getElementById('btnOpenUploadModal');
+const uploadBtnWrap = document.getElementById('uploadBtnWrap');
+const offlineTooltip = document.getElementById('offlineTooltip');
+const networkStatusEl = document.getElementById('networkStatus');
+const networkTextEl = document.getElementById('networkText');
+
+// Dashboard Elements
+const toggleRandomMode = document.getElementById('toggleRandomMode');
+const examsTotalCount = document.getElementById('examsTotalCount');
+const examsGrid = document.getElementById('examsGrid');
+
+// Quiz View Elements
+const recallModeBanner = document.getElementById('recallModeBanner');
+const btnExitRecall = document.getElementById('btnExitRecall');
 const currentQuestionNumEl = document.getElementById('currentQuestionNum');
 const totalQuestionsNumEl = document.getElementById('totalQuestionsNum');
 const progressBarEl = document.getElementById('progressBar');
 const questionCategoryEl = document.getElementById('questionCategory');
 const questionTitleEl = document.getElementById('questionTitle');
 const optionsListEl = document.getElementById('optionsList');
-
-const recallModeBanner = document.getElementById('recallModeBanner');
-const btnExitRecall = document.getElementById('btnExitRecall');
-const btnHeaderRecall = document.getElementById('btnHeaderRecall');
-const headerRecallCount = document.getElementById('headerRecallCount');
 
 const btnFundamento = document.getElementById('btnFundamento');
 const btnFundamentoText = document.getElementById('btnFundamentoText');
@@ -38,13 +61,22 @@ const fundamentoText = document.getElementById('fundamentoText');
 const btnPrev = document.getElementById('btnPrev');
 const btnNext = document.getElementById('btnNext');
 const btnFinish = document.getElementById('btnFinish');
-const btnRestart = document.getElementById('btnRestart');
+
+// Results Elements
+const resultsTitleEl = document.getElementById('resultsTitle');
+const resultsSubtitleEl = document.getElementById('resultsSubtitle');
+const scorePercentEl = document.getElementById('scorePercent');
+const scoreFractionEl = document.getElementById('scoreFraction');
+const statCorrectEl = document.getElementById('statCorrect');
+const statIncorrectEl = document.getElementById('statIncorrect');
+const statAccuracyEl = document.getElementById('statAccuracy');
+const statStatusEl = document.getElementById('statStatus');
 const btnReviewFailed = document.getElementById('btnReviewFailed');
 const reviewCountBadge = document.getElementById('reviewCountBadge');
-const btnInstall = document.getElementById('btnInstall');
+const btnRestart = document.getElementById('btnRestart');
+const btnResultsBackHome = document.getElementById('btnResultsBackHome');
 
-// Modal Elements (Carga de PDF con Gemini)
-const btnOpenUploadModal = document.getElementById('btnOpenUploadModal');
+// Modal Elements (Carga PDF con Gemini)
 const modalUploadPdf = document.getElementById('modalUploadPdf');
 const btnCloseModal = document.getElementById('btnCloseModal');
 const btnCancelUpload = document.getElementById('btnCancelUpload');
@@ -61,139 +93,419 @@ const uploadLoadingState = document.getElementById('uploadLoadingState');
 const loadingStatusText = document.getElementById('loadingStatusText');
 const btnGenerateExam = document.getElementById('btnGenerateExam');
 
-// Results & Toasts
-const quizSection = document.getElementById('quizSection');
-const resultsSection = document.getElementById('resultsSection');
-const resultsTitleEl = document.getElementById('resultsTitle');
-const resultsSubtitleEl = document.getElementById('resultsSubtitle');
-const scorePercentEl = document.getElementById('scorePercent');
-const scoreFractionEl = document.getElementById('scoreFraction');
-const statCorrectEl = document.getElementById('statCorrect');
-const statIncorrectEl = document.getElementById('statIncorrect');
-const statAccuracyEl = document.getElementById('statAccuracy');
-const statStatusEl = document.getElementById('statStatus');
-
-const networkStatusEl = document.getElementById('networkStatus');
-const networkTextEl = document.getElementById('networkText');
+// Toasts
 const toastContainerEl = document.getElementById('toastContainer');
 const toastMessageEl = document.getElementById('toastMessage');
 const toastTextEl = document.getElementById('toastText');
 
 // =============================================================================
-// 2. Active Recall (Bolsa de Repaso) LocalStorage Persistence
+// 3. Gestión de Persistencia: Exámenes, Estado y Active Recall
 // =============================================================================
-const STORAGE_KEY_REPASO = 'bolsaRepaso';
-const STORAGE_KEY_CUSTOM_EXAM = 'customExamQuestions';
 
-function getBolsaRepasoIds() {
+function getCustomExams() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_REPASO);
+    const raw = localStorage.getItem(STORAGE_KEY_CUSTOM_EXAMS);
     return raw ? JSON.parse(raw) : [];
-  } catch (err) {
-    console.error('Error al leer bolsaRepaso:', err);
+  } catch (e) {
+    console.error('Error leyendo exámenes personalizados:', e);
     return [];
   }
 }
 
-function addToBolsaRepaso(questionId) {
-  const ids = getBolsaRepasoIds();
+function saveCustomExams(exams) {
+  localStorage.setItem(STORAGE_KEY_CUSTOM_EXAMS, JSON.stringify(exams));
+}
+
+// Active Recall Independiente por Examen
+function getBolsaRepasoKey(examId) {
+  return `bolsaRepaso_${examId}`;
+}
+
+function getBolsaRepasoIds(examId) {
+  try {
+    const raw = localStorage.getItem(getBolsaRepasoKey(examId));
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function addToBolsaRepaso(examId, questionId) {
+  const ids = getBolsaRepasoIds(examId);
   if (!ids.includes(questionId)) {
     ids.push(questionId);
-    localStorage.setItem(STORAGE_KEY_REPASO, JSON.stringify(ids));
+    localStorage.setItem(getBolsaRepasoKey(examId), JSON.stringify(ids));
   }
-  updateRecallBadges();
 }
 
-function removeFromBolsaRepaso(questionId) {
-  let ids = getBolsaRepasoIds();
+function removeFromBolsaRepaso(examId, questionId) {
+  let ids = getBolsaRepasoIds(examId);
   if (ids.includes(questionId)) {
     ids = ids.filter(id => id !== questionId);
-    localStorage.setItem(STORAGE_KEY_REPASO, JSON.stringify(ids));
-  }
-  updateRecallBadges();
-}
-
-function updateRecallBadges() {
-  const count = getBolsaRepasoIds().length;
-  if (headerRecallCount) {
-    headerRecallCount.textContent = count;
-  }
-  if (reviewCountBadge) {
-    reviewCountBadge.textContent = count;
-  }
-  if (btnReviewFailed) {
-    btnReviewFailed.disabled = count === 0;
+    localStorage.setItem(getBolsaRepasoKey(examId), JSON.stringify(ids));
   }
 }
 
-// =============================================================================
-// 3. Load Questions (preguntas.json o Custom LocalStorage)
-// =============================================================================
-async function loadQuestions() {
+// Estado del Examen (Respuestas marcadas, índice actual y orden barajado)
+function getExamStateKey(examId) {
+  return `exam_state_${examId}`;
+}
+
+function getExamState(examId) {
   try {
-    // Si el usuario generó un examen previamente desde un PDF, cargarlo
-    const savedCustom = localStorage.getItem(STORAGE_KEY_CUSTOM_EXAM);
-    if (savedCustom) {
-      try {
-        const parsed = JSON.parse(savedCustom);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          FULL_QUIZ_DATA = parsed;
-          ACTIVE_QUIZ_DATA = [...FULL_QUIZ_DATA];
-          userAnswers = new Array(ACTIVE_QUIZ_DATA.length).fill(null);
-          updateRecallBadges();
-          renderCurrentQuestion();
-          showToast(`📚 Examen personalizado cargado (${FULL_QUIZ_DATA.length} preguntas)`);
-          return;
-        }
-      } catch (e) {
-        console.warn('Error leyendo examen personalizado:', e);
-      }
-    }
-
-    // Carga predeterminada del examen base oficial (200 preguntas)
-    const response = await fetch('./preguntas.json');
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    FULL_QUIZ_DATA = await response.json();
-    ACTIVE_QUIZ_DATA = [...FULL_QUIZ_DATA];
-    userAnswers = new Array(ACTIVE_QUIZ_DATA.length).fill(null);
-
-    updateRecallBadges();
-    renderCurrentQuestion();
-  } catch (error) {
-    console.error('Error cargando preguntas.json:', error);
-    questionTitleEl.textContent = 'Error al cargar las preguntas. Comprueba que el servidor esté activo.';
-    showToast('⚠️ No se pudieron cargar las preguntas');
+    const raw = localStorage.getItem(getExamStateKey(examId));
+    return raw ? JSON.parse(raw) : { currentIndex: 0, answers: {}, isRandom: false, shuffledQuestions: null };
+  } catch (e) {
+    return { currentIndex: 0, answers: {}, isRandom: false, shuffledQuestions: null };
   }
 }
 
+function saveExamState(examId, state) {
+  localStorage.setItem(getExamStateKey(examId), JSON.stringify(state));
+}
+
+function clearExamState(examId) {
+  localStorage.removeItem(getExamStateKey(examId));
+}
+
+// Modo Aleatorio Global
+function isRandomModeActive() {
+  return localStorage.getItem(STORAGE_KEY_RANDOM_MODE) === 'true';
+}
+
+function setRandomModeActive(active) {
+  localStorage.setItem(STORAGE_KEY_RANDOM_MODE, active ? 'true' : 'false');
+}
+
 // =============================================================================
-// 4. UI Rendering Functions
+// 4. Lógica de Aleatorización Inteligente (Fisher-Yates)
 // =============================================================================
 
+function shuffleArray(array) {
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/**
+ * Baraja las preguntas y TAMBIÉN las alternativas (A, B, C, D)
+ * de cada pregunta, actualizando respuestaCorrecta a su nueva posición.
+ */
+function randomizeExam(questions) {
+  const letters = ['A', 'B', 'C', 'D'];
+  const randomizedQuestions = shuffleArray(questions).map(q => {
+    // Empaquetar opciones con su condición de si era la correcta
+    const optionsWithFlag = q.opciones.map((opt, idx) => ({
+      text: opt.replace(/^[A-D]\.\s*/, ''),
+      isCorrect: idx === q.respuestaCorrecta
+    }));
+
+    // Barajar las 4 opciones
+    const shuffledOptions = shuffleArray(optionsWithFlag);
+
+    // Encontrar el nuevo índice correcto
+    const newCorrectIndex = shuffledOptions.findIndex(o => o.isCorrect);
+
+    // Reconstruir con prefijos A., B., C., D.
+    const newOpciones = shuffledOptions.map((o, idx) => `${letters[idx]}. ${o.text}`);
+
+    return {
+      ...q,
+      opciones: newOpciones,
+      respuestaCorrecta: newCorrectIndex
+    };
+  });
+
+  return randomizedQuestions;
+}
+
+// =============================================================================
+// 5. Carga y Renderizado del Dashboard (#view-home)
+// =============================================================================
+
+async function initPlatform() {
+  // Configurar toggle de modo aleatorio
+  if (toggleRandomMode) {
+    toggleRandomMode.checked = isRandomModeActive();
+    toggleRandomMode.addEventListener('change', (e) => {
+      setRandomModeActive(e.target.checked);
+      showToast(e.target.checked ? '🎲 Modo Aleatorio Activado' : '📋 Modo Secuencial Activado');
+    });
+  }
+
+  // Cargar examen oficial desde preguntas.json
+  try {
+    const response = await fetch('./preguntas.json');
+    const officialQuestions = await response.json();
+
+    const officialExam = {
+      id: OFFICIAL_EXAM_ID,
+      title: 'Residentado Médico 2026',
+      isOfficial: true,
+      date: 'Examen Oficial Comentado',
+      questions: officialQuestions
+    };
+
+    const customExams = getCustomExams();
+    ALL_EXAMS = [officialExam, ...customExams];
+
+    renderDashboard();
+    updateNetworkStatus();
+  } catch (err) {
+    console.error('Error inicializando exámenes:', err);
+    showToast('⚠️ Error al cargar el examen oficial.');
+  }
+}
+
+/**
+ * Renderiza todas las tarjetas de exámenes en el Dashboard
+ */
+function renderDashboard() {
+  if (!examsGrid) return;
+  examsGrid.innerHTML = '';
+
+  examsTotalCount.textContent = ALL_EXAMS.length;
+
+  ALL_EXAMS.forEach(exam => {
+    const totalQuestions = exam.questions.length;
+    const state = getExamState(exam.id);
+    const answers = state.answers || {};
+    const answeredCount = Object.keys(answers).length;
+
+    // Calcular estadísticas globales
+    let correctCount = 0;
+    exam.questions.forEach(q => {
+      if (answers[q.id] !== undefined && answers[q.id] === q.respuestaCorrecta) {
+        correctCount++;
+      }
+    });
+
+    const accuracy = answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0;
+    const progressPercent = Math.round((answeredCount / totalQuestions) * 100);
+    const recallCount = getBolsaRepasoIds(exam.id).length;
+
+    const card = document.createElement('div');
+    card.className = 'exam-card';
+    card.setAttribute('data-exam-id', exam.id);
+
+    card.innerHTML = `
+      <div class="exam-card-top">
+        <span class="exam-badge-type ${exam.isOfficial ? 'official' : 'custom'}">
+          ${exam.isOfficial ? 'Oficial CONAREME' : 'Generado con Gemini'}
+        </span>
+        ${!exam.isOfficial ? `
+          <button class="btn-delete-exam" data-delete-id="${exam.id}" title="Eliminar examen y sus datos" aria-label="Eliminar examen">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              <line x1="10" y1="11" x2="10" y2="17"/>
+              <line x1="14" y1="11" x2="14" y2="17"/>
+            </svg>
+          </button>
+        ` : ''}
+      </div>
+
+      <h3 class="exam-card-title">${exam.title}</h3>
+
+      <div class="exam-card-meta">
+        <span>📝 ${totalQuestions} preguntas</span>
+        <span>•</span>
+        <span>${exam.date}</span>
+      </div>
+
+      <div class="exam-progress-wrap">
+        <div class="exam-progress-labels">
+          <span class="exam-progress-stats">${answeredCount}/${totalQuestions} respondidas</span>
+          <span class="exam-accuracy-stats">${accuracy}% aciertos</span>
+        </div>
+        <div class="exam-progress-track">
+          <div class="exam-progress-fill" style="width: ${progressPercent}%;"></div>
+        </div>
+      </div>
+
+      <div class="exam-card-actions">
+        <button class="btn-card-primary" data-start-id="${exam.id}">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          ${answeredCount > 0 && answeredCount < totalQuestions ? 'Continuar' : 'Iniciar'}
+        </button>
+
+        <button class="btn-card-recall" data-recall-id="${exam.id}" ${recallCount === 0 ? 'disabled' : ''}>
+          <span>Repasar Falladas</span>
+          <span class="badge-recall-count">${recallCount}</span>
+        </button>
+      </div>
+    `;
+
+    // Eventos de botones
+    card.querySelector(`[data-start-id="${exam.id}"]`).addEventListener('click', () => {
+      startExam(exam.id, false);
+    });
+
+    card.querySelector(`[data-recall-id="${exam.id}"]`).addEventListener('click', () => {
+      startExam(exam.id, true);
+    });
+
+    const deleteBtn = card.querySelector(`[data-delete-id="${exam.id}"]`);
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteExam(exam.id);
+      });
+    }
+
+    examsGrid.appendChild(card);
+  });
+}
+
+/**
+ * Eliminar un examen personalizado
+ */
+function deleteExam(examId) {
+  const exam = ALL_EXAMS.find(e => e.id === examId);
+  if (!exam) return;
+
+  const confirmDelete = confirm(`¿Estás seguro de que deseas eliminar el examen "${exam.title}" y todos sus progresos?`);
+  if (!confirmDelete) return;
+
+  // Filtrar de la lista
+  const customExams = getCustomExams().filter(e => e.id !== examId);
+  saveCustomExams(customExams);
+
+  // Limpiar estado y bolsa de repaso
+  clearExamState(examId);
+  localStorage.removeItem(getBolsaRepasoKey(examId));
+
+  // Actualizar lista global
+  ALL_EXAMS = ALL_EXAMS.filter(e => e.id !== examId);
+  renderDashboard();
+  showToast('🗑️ Examen eliminado con éxito');
+}
+
+// =============================================================================
+// 6. Navegación y Flujo del Examen
+// =============================================================================
+
+function showView(viewName) {
+  if (viewName === 'home') {
+    viewHome.style.display = 'flex';
+    quizSection.style.display = 'none';
+    resultsSection.classList.remove('active');
+    resultsSection.setAttribute('aria-hidden', 'true');
+    btnBackHome.style.display = 'none';
+    renderDashboard();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } else if (viewName === 'quiz') {
+    viewHome.style.display = 'none';
+    quizSection.style.display = 'flex';
+    resultsSection.classList.remove('active');
+    resultsSection.setAttribute('aria-hidden', 'true');
+    btnBackHome.style.display = 'inline-flex';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } else if (viewName === 'results') {
+    viewHome.style.display = 'none';
+    quizSection.style.display = 'none';
+    resultsSection.classList.add('active');
+    resultsSection.setAttribute('aria-hidden', 'false');
+    btnBackHome.style.display = 'inline-flex';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+}
+
+btnBackHome.addEventListener('click', () => {
+  showView('home');
+});
+
+btnResultsBackHome.addEventListener('click', () => {
+  showView('home');
+});
+
+/**
+ * Inicia una sesión de examen (normal o Active Recall)
+ */
+function startExam(examId, recallOnly = false) {
+  currentExam = ALL_EXAMS.find(e => e.id === examId);
+  if (!currentExam) return;
+
+  isRecallMode = recallOnly;
+
+  if (isRecallMode) {
+    const failedIds = getBolsaRepasoIds(examId);
+    if (failedIds.length === 0) {
+      showToast('🎉 ¡Excelente! No tienes preguntas falladas en este examen.');
+      return;
+    }
+    currentQuestions = currentExam.questions.filter(q => failedIds.includes(q.id));
+    currentQuestionIndex = 0;
+    userAnswers = new Array(currentQuestions.length).fill(null);
+    recallModeBanner.style.display = 'flex';
+    showToast(`🎯 Modo Repaso Activo: ${currentQuestions.length} preguntas`);
+  } else {
+    recallModeBanner.style.display = 'none';
+    const useRandom = isRandomModeActive();
+    const state = getExamState(examId);
+
+    // Si hay un estado previo guardado con el mismo modo aleatorio, restaurar
+    if (state && state.shuffledQuestions && state.isRandom === useRandom) {
+      currentQuestions = state.shuffledQuestions;
+      currentQuestionIndex = state.currentIndex || 0;
+    } else {
+      // Crear nueva secuencia (aleatoria o secuencial)
+      if (useRandom) {
+        currentQuestions = randomizeExam(currentExam.questions);
+      } else {
+        currentQuestions = [...currentExam.questions];
+      }
+      currentQuestionIndex = 0;
+
+      // Guardar nueva semilla en localStorage
+      saveExamState(examId, {
+        currentIndex: 0,
+        answers: {},
+        isRandom: useRandom,
+        shuffledQuestions: currentQuestions
+      });
+    }
+
+    // Reconstruir userAnswers a partir de los IDs guardados en state.answers
+    const currentSavedState = getExamState(examId);
+    const answersMap = currentSavedState.answers || {};
+    userAnswers = currentQuestions.map(q => (answersMap[q.id] !== undefined ? answersMap[q.id] : null));
+  }
+
+  showView('quiz');
+  renderCurrentQuestion();
+}
+
+/**
+ * Renderiza la pregunta actual en pantalla
+ */
 function renderCurrentQuestion() {
-  if (!ACTIVE_QUIZ_DATA || ACTIVE_QUIZ_DATA.length === 0) return;
+  if (!currentQuestions || currentQuestions.length === 0) return;
 
-  const currentQ = ACTIVE_QUIZ_DATA[currentQuestionIndex];
-  const totalQ = ACTIVE_QUIZ_DATA.length;
+  const currentQ = currentQuestions[currentQuestionIndex];
+  const totalQ = currentQuestions.length;
   const previousAnswer = userAnswers[currentQuestionIndex];
 
-  // 1. Actualizar barra de progreso y contador
+  // 1. Barra de progreso y contador
   currentQuestionNumEl.textContent = currentQuestionIndex + 1;
   totalQuestionsNumEl.textContent = totalQ;
   const progressPercent = Math.round(((currentQuestionIndex + 1) / totalQ) * 100);
   progressBarEl.style.width = `${progressPercent}%`;
   progressBarEl.setAttribute('aria-valuenow', progressPercent);
 
-  // 2. Encabezado de la pregunta y categoría
+  // 2. Encabezado
   if (isRecallMode) {
-    questionCategoryEl.textContent = `🎯 Repaso Activo • Pregunta ${currentQ.id}`;
+    questionCategoryEl.textContent = `🎯 Repaso Activo • ${currentExam.title}`;
     questionCategoryEl.style.color = '#f59e0b';
     questionCategoryEl.style.borderColor = 'rgba(245, 158, 11, 0.4)';
     questionCategoryEl.style.background = 'rgba(245, 158, 11, 0.12)';
   } else {
-    questionCategoryEl.textContent = `Pregunta ${currentQ.id} • Residentado Médico 2026`;
+    questionCategoryEl.textContent = `Pregunta ${currentQ.id} • ${currentExam.title}`;
     questionCategoryEl.style.color = 'var(--accent-cyan)';
     questionCategoryEl.style.borderColor = 'rgba(6, 182, 212, 0.25)';
     questionCategoryEl.style.background = 'rgba(6, 182, 212, 0.1)';
@@ -202,7 +514,7 @@ function renderCurrentQuestion() {
   questionTitleEl.textContent = currentQ.pregunta;
   fundamentoText.textContent = currentQ.fundamento || 'Justificación oficial no disponible.';
 
-  // 3. Generar opciones de respuesta tipo tarjeta táctil
+  // 3. Opciones de respuesta
   optionsListEl.innerHTML = '';
   const optionLetters = ['A', 'B', 'C', 'D'];
   const hasAnswered = previousAnswer !== null;
@@ -218,7 +530,6 @@ function renderCurrentQuestion() {
     optionBtn.setAttribute('role', 'radio');
     optionBtn.setAttribute('data-index', index);
 
-    // Aplicar marcado si ya fue respondida
     if (hasAnswered) {
       optionBtn.disabled = true;
       if (isSelected) {
@@ -243,18 +554,18 @@ function renderCurrentQuestion() {
     optionsListEl.appendChild(optionBtn);
   });
 
-  // 4. Desplegar fundamento si ya fue respondida, o replegar si es nueva
+  // 4. Fundamento automático
   if (hasAnswered) {
     showFundamento();
   } else {
     hideFundamento();
   }
 
-  // 5. Controles de Navegación
+  // 5. Botones Anterior / Siguiente / Finalizar
   btnPrev.disabled = currentQuestionIndex === 0;
 
-  const isLastQuestion = currentQuestionIndex === totalQ - 1;
-  if (isLastQuestion) {
+  const isLast = currentQuestionIndex === totalQ - 1;
+  if (isLast) {
     btnNext.style.display = 'none';
     btnFinish.classList.add('visible');
   } else {
@@ -264,24 +575,28 @@ function renderCurrentQuestion() {
 }
 
 /**
- * Manejo de clic/tap en una opción de respuesta:
- * - Verde si es correcta
- * - Rojo la elegida y verde la correcta si es incorrecta
- * - Deshabilita todas las opciones de la pregunta
- * - Despliega automáticamente el fundamento
- * - Guarda en bolsaRepaso si falló, o remueve si acertó en modo repaso
+ * Manejo de selección de respuesta
  */
 function handleSelectOption(selectedIndex) {
   if (userAnswers[currentQuestionIndex] !== null) return;
 
-  const currentQ = ACTIVE_QUIZ_DATA[currentQuestionIndex];
+  const currentQ = currentQuestions[currentQuestionIndex];
   userAnswers[currentQuestionIndex] = selectedIndex;
+
+  // Persistir en el estado del examen por el ID único de la pregunta
+  if (!isRecallMode) {
+    const state = getExamState(currentExam.id);
+    state.answers = state.answers || {};
+    state.answers[currentQ.id] = selectedIndex;
+    state.currentIndex = currentQuestionIndex;
+    saveExamState(currentExam.id, state);
+  }
 
   const isCorrect = (selectedIndex === currentQ.respuestaCorrecta);
   const cards = optionsListEl.querySelectorAll('.option-card');
 
   cards.forEach((card, idx) => {
-    card.disabled = true; // Deshabilitar para evitar cambios posteriores
+    card.disabled = true;
 
     if (idx === selectedIndex) {
       card.classList.add('selected');
@@ -295,21 +610,19 @@ function handleSelectOption(selectedIndex) {
     }
   });
 
-  // Gestión de la Bolsa de Repaso Activo
+  // Gestión de Active Recall aislada para este examen
   if (!isCorrect) {
-    addToBolsaRepaso(currentQ.id);
-    showToast('❌ Incorrecta. Guardada en Bolsa de Repaso Activo.');
+    addToBolsaRepaso(currentExam.id, currentQ.id);
+    showToast('❌ Incorrecta. Guardada en Bolsa de Repaso de este examen.');
   } else {
     if (isRecallMode) {
-      removeFromBolsaRepaso(currentQ.id);
-      showToast('✅ ¡Excelente! Eliminada de la Bolsa de Repaso.');
+      removeFromBolsaRepaso(currentExam.id, currentQ.id);
+      showToast('✅ ¡Bien hecho! Eliminada de tu Bolsa de Repaso.');
     }
   }
 
-  // Desplegar automáticamente el contenedor de fundamento
   showFundamento();
 
-  // Vibración táctil háptica
   if ('vibrate' in navigator) {
     navigator.vibrate(isCorrect ? 30 : [50, 40, 50]);
   }
@@ -340,8 +653,13 @@ function hideFundamento() {
 }
 
 function handleNext() {
-  if (currentQuestionIndex < ACTIVE_QUIZ_DATA.length - 1) {
+  if (currentQuestionIndex < currentQuestions.length - 1) {
     currentQuestionIndex++;
+    if (!isRecallMode) {
+      const state = getExamState(currentExam.id);
+      state.currentIndex = currentQuestionIndex;
+      saveExamState(currentExam.id, state);
+    }
     renderCurrentQuestion();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -350,6 +668,11 @@ function handleNext() {
 function handlePrev() {
   if (currentQuestionIndex > 0) {
     currentQuestionIndex--;
+    if (!isRecallMode) {
+      const state = getExamState(currentExam.id);
+      state.currentIndex = currentQuestionIndex;
+      saveExamState(currentExam.id, state);
+    }
     renderCurrentQuestion();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -358,18 +681,18 @@ function handlePrev() {
 function handleFinishQuiz() {
   const unansweredCount = userAnswers.filter(ans => ans === null).length;
   if (unansweredCount > 0) {
-    const confirmFinish = confirm(`Tienes ${unansweredCount} pregunta(s) sin responder de ${ACTIVE_QUIZ_DATA.length}. ¿Deseas finalizar la prueba de todos modos?`);
+    const confirmFinish = confirm(`Tienes ${unansweredCount} pregunta(s) sin responder de ${currentQuestions.length}. ¿Deseas finalizar la prueba de todos modos?`);
     if (!confirmFinish) return;
   }
 
   let correctCount = 0;
-  ACTIVE_QUIZ_DATA.forEach((q, idx) => {
+  currentQuestions.forEach((q, idx) => {
     if (userAnswers[idx] === q.respuestaCorrecta) {
       correctCount++;
     }
   });
 
-  const total = ACTIVE_QUIZ_DATA.length;
+  const total = currentQuestions.length;
   const incorrectCount = total - correctCount;
   const percentage = Math.round((correctCount / total) * 100);
 
@@ -381,10 +704,10 @@ function handleFinishQuiz() {
 
   if (isRecallMode) {
     resultsTitleEl.textContent = "¡Sesión de Repaso Finalizada!";
-    resultsSubtitleEl.textContent = `Has repasado ${total} preguntas de tu bolsa activa.`;
+    resultsSubtitleEl.textContent = `Has repasado ${total} preguntas falladas de ${currentExam.title}.`;
   } else {
     resultsTitleEl.textContent = "¡Examen Finalizado!";
-    resultsSubtitleEl.textContent = "Has completado todas las preguntas evaluadas.";
+    resultsSubtitleEl.textContent = `Evaluación completada para: ${currentExam.title}.`;
   }
 
   if (percentage >= 80) {
@@ -398,79 +721,73 @@ function handleFinishQuiz() {
     statStatusEl.style.color = "var(--warning)";
   }
 
-  updateRecallBadges();
+  // Actualizar botón de falladas en resultados
+  const failedCount = getBolsaRepasoIds(currentExam.id).length;
+  reviewCountBadge.textContent = failedCount;
+  btnReviewFailed.disabled = failedCount === 0;
 
-  quizSection.style.display = 'none';
-  resultsSection.classList.add('active');
-  resultsSection.setAttribute('aria-hidden', 'false');
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  showView('results');
 }
 
-function startActiveRecall() {
-  const failedIds = getBolsaRepasoIds();
+btnExitRecall.addEventListener('click', () => {
+  startExam(currentExam.id, false);
+});
 
-  if (failedIds.length === 0) {
-    showToast('🎉 ¡Felicitaciones! No tienes preguntas en tu Bolsa de Repaso.');
-    return;
-  }
+btnRestart.addEventListener('click', () => {
+  clearExamState(currentExam.id);
+  startExam(currentExam.id, false);
+});
 
-  const failedQuestions = FULL_QUIZ_DATA.filter(q => failedIds.includes(q.id));
-  if (failedQuestions.length === 0) {
-    showToast('No se encontraron las preguntas seleccionadas.');
-    return;
-  }
+btnReviewFailed.addEventListener('click', () => {
+  startExam(currentExam.id, true);
+});
 
-  isRecallMode = true;
-  ACTIVE_QUIZ_DATA = failedQuestions;
-  userAnswers = new Array(ACTIVE_QUIZ_DATA.length).fill(null);
-  currentQuestionIndex = 0;
-
-  recallModeBanner.style.display = 'flex';
-  resultsSection.classList.remove('active');
-  resultsSection.setAttribute('aria-hidden', 'true');
-  quizSection.style.display = 'flex';
-
-  renderCurrentQuestion();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-  showToast(`🎯 Modo Repaso Activo: ${failedQuestions.length} pregunta(s)`);
-}
-
-function exitActiveRecall() {
-  isRecallMode = false;
-  ACTIVE_QUIZ_DATA = [...FULL_QUIZ_DATA];
-  userAnswers = new Array(ACTIVE_QUIZ_DATA.length).fill(null);
-  currentQuestionIndex = 0;
-
-  recallModeBanner.style.display = 'none';
-  resultsSection.classList.remove('active');
-  resultsSection.setAttribute('aria-hidden', 'true');
-  quizSection.style.display = 'flex';
-
-  renderCurrentQuestion();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-  showToast('📋 Volviste al Examen Completo');
-}
-
-function handleRestartQuiz() {
-  isRecallMode = false;
-  ACTIVE_QUIZ_DATA = [...FULL_QUIZ_DATA];
-  userAnswers = new Array(ACTIVE_QUIZ_DATA.length).fill(null);
-  currentQuestionIndex = 0;
-
-  recallModeBanner.style.display = 'none';
-  resultsSection.classList.remove('active');
-  resultsSection.setAttribute('aria-hidden', 'true');
-  quizSection.style.display = 'flex';
-
-  renderCurrentQuestion();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-}
+btnPrev.addEventListener('click', handlePrev);
+btnNext.addEventListener('click', handleNext);
+btnFinish.addEventListener('click', handleFinishQuiz);
+btnFundamento.addEventListener('click', toggleFundamento);
 
 // =============================================================================
-// 5. PDF Upload & Gemini 2.5 Flash Generation Handlers
+// 7. Detección Offline y Control de Red para Gemini
+// =============================================================================
+
+function updateNetworkStatus() {
+  const isOnline = navigator.onLine;
+
+  if (isOnline) {
+    networkStatusEl.classList.remove('offline');
+    networkTextEl.textContent = 'En línea';
+    btnOpenUploadModal.disabled = false;
+    offlineTooltip.style.display = 'none';
+    uploadBtnWrap.removeAttribute('title');
+  } else {
+    networkStatusEl.classList.add('offline');
+    networkTextEl.textContent = 'Sin conexión';
+    btnOpenUploadModal.disabled = true;
+    offlineTooltip.style.display = 'block';
+    uploadBtnWrap.setAttribute('title', 'Requiere conexión a internet para procesar PDFs con IA');
+    showToast('⚠️ Modo offline: Generación de exámenes con IA deshabilitada');
+  }
+}
+
+window.addEventListener('online', () => {
+  updateNetworkStatus();
+  showToast('🟢 Conexión a internet restablecida');
+});
+
+window.addEventListener('offline', () => {
+  updateNetworkStatus();
+});
+
+// =============================================================================
+// 8. Modal de Subida de PDF y Llamada a Gemini 2.5 Flash
 // =============================================================================
 
 function openUploadModal() {
+  if (!navigator.onLine) {
+    showToast('⚠️ Requiere conexión a internet para procesar PDFs con IA');
+    return;
+  }
   modalUploadPdf.style.display = 'flex';
   modalUploadPdf.setAttribute('aria-hidden', 'false');
   resetUploadModal();
@@ -523,7 +840,7 @@ function showUploadError(msg) {
   btnCloseModal.disabled = false;
 }
 
-// Drag & drop handlers
+// Drag & drop
 dropZonePdf.addEventListener('click', () => inputPdfFile.click());
 inputPdfFile.addEventListener('change', (e) => {
   if (e.target.files && e.target.files[0]) {
@@ -557,7 +874,6 @@ btnOpenUploadModal.addEventListener('click', openUploadModal);
 btnCloseModal.addEventListener('click', closeUploadModal);
 btnCancelUpload.addEventListener('click', closeUploadModal);
 
-// Close on backdrop click
 modalUploadPdf.addEventListener('click', (e) => {
   if (e.target === modalUploadPdf && uploadLoadingState.style.display === 'none') {
     closeUploadModal();
@@ -565,27 +881,30 @@ modalUploadPdf.addEventListener('click', (e) => {
 });
 
 /**
- * Enviar PDF al endpoint del servidor y generar preguntas con Gemini 2.5 Flash
+ * Enviar PDF al servidor y registrar nuevo examen personalizado
  */
 async function generateExamFromPdf() {
   if (!selectedPdfFile) return;
 
+  if (!navigator.onLine) {
+    showUploadError('No hay conexión a internet. Se requiere red para conectar con la API de Gemini.');
+    return;
+  }
+
   const formData = new FormData();
   formData.append('pdf', selectedPdfFile);
 
-  // UI en estado de carga
   uploadErrorBanner.style.display = 'none';
   uploadLoadingState.style.display = 'flex';
   btnGenerateExam.disabled = true;
   btnCancelUpload.disabled = true;
   btnCloseModal.disabled = true;
 
-  // Secuencia de mensajes informativos en el loader
   loadingStatusText.textContent = "Subiendo documento al servidor...";
   const statusSteps = [
     { time: 2500, text: "Analizando contenido con Gemini 2.5 Flash..." },
     { time: 7000, text: "Estructurando opciones y fundamentos clínicos..." },
-    { time: 14000, text: "Validando formato de evaluación interactiva..." }
+    { time: 14000, text: "Validando formato multi-examen..." }
   ];
   const stepTimeouts = statusSteps.map(step =>
     setTimeout(() => {
@@ -600,7 +919,6 @@ async function generateExamFromPdf() {
     });
 
     stepTimeouts.forEach(clearTimeout);
-
     const result = await response.json();
 
     if (!response.ok || !result.success) {
@@ -612,51 +930,45 @@ async function generateExamFromPdf() {
       throw new Error('Gemini no generó preguntas válidas para este documento.');
     }
 
-    const isAppend = chkAppendQuestions.checked;
-    if (isAppend) {
-      // Reindexar preguntas añadidas para que los IDs sean únicos
-      const currentCount = FULL_QUIZ_DATA.length;
-      const reindexed = newQuestions.map((q, idx) => ({
-        ...q,
-        id: currentCount + idx + 1
-      }));
-      FULL_QUIZ_DATA = [...FULL_QUIZ_DATA, ...reindexed];
-    } else {
-      FULL_QUIZ_DATA = newQuestions;
-    }
+    // Crear nuevo examen en la plataforma
+    const examName = selectedPdfFile.name.replace(/\.pdf$/i, '');
+    const cleanTitle = examName.length > 35 ? examName.substring(0, 32) + '...' : examName;
 
-    // Persistir en localStorage
-    localStorage.setItem(STORAGE_KEY_CUSTOM_EXAM, JSON.stringify(FULL_QUIZ_DATA));
+    const newExam = {
+      id: `custom_${Date.now()}`,
+      title: cleanTitle,
+      isOfficial: false,
+      date: new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
+      questions: newQuestions
+    };
 
-    // Reiniciar estado con las nuevas preguntas
-    isRecallMode = false;
-    ACTIVE_QUIZ_DATA = [...FULL_QUIZ_DATA];
-    userAnswers = new Array(ACTIVE_QUIZ_DATA.length).fill(null);
-    currentQuestionIndex = 0;
+    // Guardar en la lista persistente de exámenes personalizados
+    const customExams = getCustomExams();
+    customExams.unshift(newExam);
+    saveCustomExams(customExams);
 
-    recallModeBanner.style.display = 'none';
-    resultsSection.classList.remove('active');
-    resultsSection.setAttribute('aria-hidden', 'true');
-    quizSection.style.display = 'flex';
+    // Actualizar lista global
+    ALL_EXAMS.push(newExam);
 
-    renderCurrentQuestion();
     closeUploadModal();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    renderDashboard();
+    showView('home');
 
-    showToast(`🎉 ¡Examen generado con éxito! ${newQuestions.length} preguntas añadidas.`);
+    showToast(`🎉 ¡Examen "${cleanTitle}" creado con ${newQuestions.length} preguntas!`);
 
   } catch (error) {
     stepTimeouts.forEach(clearTimeout);
     console.error('Error al generar examen:', error);
-    showUploadError(error.message || 'Error al comunicarse con el servidor o la API de Gemini.');
+    showUploadError(error.message || 'Error al comunicarse con la API de Gemini.');
   }
 }
 
 btnGenerateExam.addEventListener('click', generateExamFromPdf);
 
 // =============================================================================
-// 6. Toast Notifications & Network
+// 9. PWA Lifecycle y Notificaciones
 // =============================================================================
+
 let toastTimeout;
 function showToast(message, duration = 3000) {
   clearTimeout(toastTimeout);
@@ -668,29 +980,6 @@ function showToast(message, duration = 3000) {
   }, duration);
 }
 
-function updateNetworkStatus() {
-  const isOnline = navigator.onLine;
-  if (isOnline) {
-    networkStatusEl.classList.remove('offline');
-    networkTextEl.textContent = 'En línea';
-    showToast('🟢 Conexión restablecida');
-  } else {
-    networkStatusEl.classList.add('offline');
-    networkTextEl.textContent = 'Sin conexión';
-    showToast('⚠️ Modo offline activado');
-  }
-}
-
-window.addEventListener('online', updateNetworkStatus);
-window.addEventListener('offline', updateNetworkStatus);
-if (!navigator.onLine) {
-  networkStatusEl.classList.add('offline');
-  networkTextEl.textContent = 'Sin conexión';
-}
-
-// =============================================================================
-// 7. PWA Installation Event Handling
-// =============================================================================
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredPrompt = e;
@@ -713,43 +1002,20 @@ window.addEventListener('appinstalled', () => {
   btnInstall.classList.remove('visible');
 });
 
-// =============================================================================
-// 8. Service Worker Registration
-// =============================================================================
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('./sw.js')
-      .then((registration) => {
-        console.log('[PWA] Service Worker registrado con scope:', registration.scope);
+      .then((reg) => {
+        console.log('[PWA] Service Worker activo con scope:', reg.scope);
       })
-      .catch((error) => {
-        console.error('[PWA] Error al registrar Service Worker:', error);
+      .catch((err) => {
+        console.error('[PWA] Error al registrar Service Worker:', err);
       });
   });
 }
 
 // =============================================================================
-// 9. Event Listeners & Boot
+// 10. Inicialización
 // =============================================================================
-btnFundamento.addEventListener('click', toggleFundamento);
-btnPrev.addEventListener('click', handlePrev);
-btnNext.addEventListener('click', handleNext);
-btnFinish.addEventListener('click', handleFinishQuiz);
-btnRestart.addEventListener('click', handleRestartQuiz);
-btnReviewFailed.addEventListener('click', startActiveRecall);
-btnExitRecall.addEventListener('click', exitActiveRecall);
-
-if (btnHeaderRecall) {
-  btnHeaderRecall.addEventListener('click', () => {
-    const failedIds = getBolsaRepasoIds();
-    if (failedIds.length === 0) {
-      showToast('🎉 ¡Bolsa vacía! No tienes preguntas falladas pendientes.');
-    } else {
-      startActiveRecall();
-    }
-  });
-}
-
-// Iniciar carga de preguntas
-loadQuestions();
+initPlatform();
