@@ -77,6 +77,23 @@
         <p class="hero-desc">Estudia con exámenes oficiales comentados, practica tus fallas con Active Recall o genera nuevos simulacros desde tus propios PDFs con IA.</p>
       </div>
 
+      <!-- Modo Mix Banner (Simulacros Personalizados) -->
+      <div class="modo-mix-banner">
+        <div class="mix-banner-info">
+          <div class="mix-banner-tag">
+            <span>✨ Simulador Adaptativo</span>
+          </div>
+          <h3 class="mix-banner-title">Modo Mix: Simulacros por Especialidad</h3>
+          <p class="mix-banner-desc">Combina preguntas de Cardiología, Neumología, Infectología y más con la cantidad que tú elijas.</p>
+        </div>
+        <button id="btnOpenModoMix" class="btn-mix-primary" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+          <span>Configurar Simulacro</span>
+        </button>
+      </div>
+
       <!-- Settings Bar (Toggle Modo Aleatorio) -->
       <div class="settings-card">
         <div class="setting-info">
@@ -129,7 +146,14 @@
 
       <!-- Question Card -->
       <section class="question-card" aria-live="polite">
-        <div id="questionCategory" class="question-category">Examen Oficial Comentado</div>
+        <div class="question-card-top-bar">
+          <div id="questionCategory" class="question-category">Examen Oficial Comentado</div>
+          <div id="questionMetaBadges" class="question-meta-badges">
+            <span id="badgeSpecialty" class="meta-badge badge-specialty">Cardiología</span>
+            <span id="badgeYear" class="meta-badge badge-year">2026</span>
+            <span id="badgeDifficulty" class="meta-badge badge-difficulty difficulty-medium">Intermedio</span>
+          </div>
+        </div>
         <h2 id="questionTitle" class="question-title">Cargando pregunta...</h2>
       </section>
 
@@ -150,14 +174,38 @@
         </button>
 
         <div id="fundamentoCard" class="fundamento-card" hidden>
-          <div class="fundamento-badge">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-              <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
-            </svg>
-            Justificación Oficial
+          <div class="fundamento-header-row">
+            <div class="fundamento-badge">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+              </svg>
+              Fundamentación Clínica Auditada
+            </div>
           </div>
-          <p id="fundamentoText" class="fundamento-text"></p>
+          
+          <div class="fundamento-sections">
+            <!-- Bloque 1: Correcta -->
+            <div class="fundamento-block block-correcta">
+              <div class="fundamento-block-title">
+                <span class="block-icon icon-check">✔</span>
+                <strong>¿Por qué es la opción correcta?</strong>
+              </div>
+              <p id="fundamentoCorrectaText" class="fundamento-text"></p>
+            </div>
+
+            <!-- Bloque 2: Descarte -->
+            <div class="fundamento-block block-descarte">
+              <div class="fundamento-block-title">
+                <span class="block-icon icon-cross">✖</span>
+                <strong>Descarte de alternativas</strong>
+              </div>
+              <p id="fundamentoDescarteText" class="fundamento-text"></p>
+            </div>
+
+            <!-- Fallback para compatibilidad legacy -->
+            <p id="fundamentoLegacyText" class="fundamento-text" style="display: none;"></p>
+          </div>
         </div>
       </div>
 
@@ -316,6 +364,115 @@
               <line x1="12" y1="3" x2="12" y2="15"/>
             </svg>
             Generar Examen con Gemini
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal de Revisión y Auditoría de Preguntas generadas por PDF -->
+    <div id="modalAuditPdf" class="modal-overlay" style="display: none;" aria-hidden="true" role="dialog" aria-labelledby="modalAuditTitle">
+      <div class="modal-card modal-card-wide">
+        <div class="modal-header">
+          <div class="modal-title-wrap">
+            <div class="modal-icon-sparkle">🩺</div>
+            <div>
+              <h3 id="modalAuditTitle" class="modal-title">Auditoría y Clasificación de Preguntas</h3>
+              <p class="modal-subtitle">Revisa las especialidades asignadas por la IA y ajusta el año o dificultad antes de confirmar.</p>
+            </div>
+          </div>
+          <button id="btnCloseAuditModal" class="btn-close-modal" aria-label="Cerrar modal">&times;</button>
+        </div>
+
+        <div class="modal-body audit-modal-body">
+          <!-- Exam Meta Input -->
+          <div class="audit-exam-meta">
+            <div class="audit-meta-field">
+              <label for="inputAuditExamTitle"><strong>Título del Examen:</strong></label>
+              <input type="text" id="inputAuditExamTitle" class="form-input" placeholder="Nombre del examen">
+            </div>
+            <div class="audit-stats-pill">
+              <span id="auditTotalQuestionsCount">0</span> preguntas extraídas
+            </div>
+          </div>
+
+          <!-- Questions Audit List -->
+          <div id="auditQuestionsContainer" class="audit-questions-list">
+            <!-- Questions rendered by app.js -->
+          </div>
+        </div>
+
+        <div class="modal-footer sticky-modal-footer">
+          <button id="btnCancelAudit" class="btn-modal-secondary" type="button">Descartar</button>
+          <button id="btnConfirmSaveExam" class="btn-modal-primary" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+              <polyline points="17 21 17 13 7 13 7 21"/>
+              <polyline points="7 3 7 8 15 8"/>
+            </svg>
+            Confirmar y Guardar Examen
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal para Modo Mix (Simulacros Personalizados) -->
+    <div id="modalModoMix" class="modal-overlay" style="display: none;" aria-hidden="true" role="dialog" aria-labelledby="modalMixTitle">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title-wrap">
+            <div class="modal-icon-sparkle">✨</div>
+            <div>
+              <h3 id="modalMixTitle" class="modal-title">Modo Mix: Simulacro Personalizado</h3>
+              <p class="modal-subtitle">Configura una prueba adaptativa combinando preguntas del banco acumulado.</p>
+            </div>
+          </div>
+          <button id="btnCloseMixModal" class="btn-close-modal" aria-label="Cerrar modal">&times;</button>
+        </div>
+
+        <div class="modal-body">
+          <!-- Step 1: Number of Questions -->
+          <div class="mix-config-section">
+            <label class="mix-section-label">
+              <span class="step-num">1</span>
+              <strong>Cantidad de preguntas:</strong>
+            </label>
+            <div class="mix-quantity-selector" role="radiogroup" aria-label="Cantidad de preguntas">
+              <button type="button" class="btn-qty-pill active" data-qty="10">10 preguntas</button>
+              <button type="button" class="btn-qty-pill" data-qty="20">20 preguntas</button>
+              <button type="button" class="btn-qty-pill" data-qty="50">50 preguntas</button>
+              <button type="button" class="btn-qty-pill" data-qty="100">100 preguntas</button>
+            </div>
+          </div>
+
+          <!-- Step 2: Specialties Selection -->
+          <div class="mix-config-section">
+            <div class="mix-specialties-header">
+              <label class="mix-section-label">
+                <span class="step-num">2</span>
+                <strong>Especialidades de Medicina Interna:</strong>
+              </label>
+              <button id="btnToggleAllSpecialties" class="btn-text-action" type="button">Deseleccionar Todas</button>
+            </div>
+
+            <div id="mixSpecialtiesGrid" class="mix-specialties-grid">
+              <!-- Rendered dynamically with counts -->
+            </div>
+          </div>
+
+          <!-- Availability Counter -->
+          <div class="mix-availability-bar">
+            <span>Disponibles en el banco:</span>
+            <strong id="mixAvailableCount">0 preguntas</strong>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button id="btnCancelMix" class="btn-modal-secondary" type="button">Cancelar</button>
+          <button id="btnStartMixExam" class="btn-modal-primary" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            Comenzar Simulacro Mix
           </button>
         </div>
       </div>

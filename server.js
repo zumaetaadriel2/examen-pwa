@@ -72,9 +72,29 @@ app.post('/api/generar-examen', async (req, res) => {
     // Inicializar SDK oficial de Gemini
     const ai = new GoogleGenAI({ apiKey: apiKey.trim() });
 
-    const promptText = "Genera o extrae un cuestionario de opción múltiple con su clave de respuesta correcta y el fundamento de cada pregunta basándote en el documento. Asegúrate de incluir 4 opciones con letras A, B, C, D, la respuesta correcta como índice numérico (0 para A, 1 para B, 2 para C, 3 para D), y una justificación o fundamento clínico/técnico detallado para cada pregunta.";
+    const promptText = `Actúa como un médico especialista y docente evaluador de Medicina Interna de alto nivel.
+Analiza el documento PDF adjunto y extrae o genera un banco de preguntas clínicas de opción múltiple estructuradas y auditadas para evaluación médica.
 
-    // Llamada a Gemini 2.5 Flash con Structured Outputs
+Para cada pregunta debes:
+1. Extraer o redactar el caso clínico / enunciado con rigor médico.
+2. Definir exactamente 4 opciones de respuesta con prefijos "A. ", "B. ", "C. ", "D. ".
+3. Auditar rigurosamente la clave de respuesta correcta ("respuestaCorrecta" como índice numérico entero: 0 para A, 1 para B, 2 para C, 3 para D).
+4. Clasificar obligatoriamente la pregunta en una de las siguientes 8 especialidades base de Medicina Interna:
+   - Gastroenterología
+   - Cardiología
+   - Neumología
+   - Nefrología
+   - Hematología
+   - Endocrinología
+   - Reumatología
+   - Infectología
+5. Identificar o estimar el año de la convocatoria ("anio", ej. "2024", "2025" o "2026").
+6. Evaluar la dificultad médica ("dificultad": obligatoriamente "Fácil", "Intermedio" o "Difícil").
+7. Elaborar un fundamento clínico detallado ("fundamentoDetallado") con dos propiedades:
+   - "correcta": Justificación clínica profunda de por qué la opción marcada es la correcta basada en guías clínicas y fisiopatología.
+   - "descarte": Explicación sintética de por qué las alternativas restantes son incorrectas o contraindicadas.`;
+
+    // Llamada a Gemini 2.5 Flash con Structured Outputs enriquecido
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
       contents: [
@@ -100,9 +120,43 @@ app.post('/api/generar-examen', async (req, res) => {
                 items: { type: Type.STRING }
               },
               respuestaCorrecta: { type: Type.INTEGER },
-              fundamento: { type: Type.STRING }
+              especialidad: {
+                type: Type.STRING,
+                description: 'Especialidad obligatoria de Medicina Interna: Gastroenterología, Cardiología, Neumología, Nefrología, Hematología, Endocrinología, Reumatología, Infectología'
+              },
+              anio: {
+                type: Type.STRING,
+                description: 'Año de la pregunta (ej. 2024, 2025, 2026)'
+              },
+              dificultad: {
+                type: Type.STRING,
+                description: 'Nivel de dificultad médica: Fácil, Intermedio, Difícil'
+              },
+              fundamentoDetallado: {
+                type: Type.OBJECT,
+                properties: {
+                  correcta: {
+                    type: Type.STRING,
+                    description: 'Explicación de por qué la opción es la correcta'
+                  },
+                  descarte: {
+                    type: Type.STRING,
+                    description: 'Explicación de por qué se descartan las demás alternativas'
+                  }
+                },
+                required: ['correcta', 'descarte']
+              }
             },
-            required: ['id', 'pregunta', 'opciones', 'respuestaCorrecta', 'fundamento']
+            required: [
+              'id',
+              'pregunta',
+              'opciones',
+              'respuestaCorrecta',
+              'especialidad',
+              'anio',
+              'dificultad',
+              'fundamentoDetallado'
+            ]
           }
         }
       }
@@ -110,14 +164,37 @@ app.post('/api/generar-examen', async (req, res) => {
 
     const generatedQuestions = JSON.parse(response.text);
 
-    // Formatear IDs secuenciales si fuera necesario
-    const formattedQuestions = generatedQuestions.map((q, idx) => ({
-      id: q.id || (idx + 1),
-      pregunta: q.pregunta,
-      opciones: q.opciones,
-      respuestaCorrecta: q.respuestaCorrecta,
-      fundamento: q.fundamento
-    }));
+    const VALID_SPECIALTIES = [
+      'Gastroenterología', 'Cardiología', 'Neumología', 'Nefrología',
+      'Hematología', 'Endocrinología', 'Reumatología', 'Infectología'
+    ];
+
+    // Formatear IDs y garantizar consistencia de metadatos clínicos
+    const formattedQuestions = generatedQuestions.map((q, idx) => {
+      let especialidad = q.especialidad || 'Infectología';
+      if (!VALID_SPECIALTIES.includes(especialidad)) {
+        const match = VALID_SPECIALTIES.find(s => especialidad.toLowerCase().includes(s.toLowerCase().slice(0, 5)));
+        especialidad = match || 'Gastroenterología';
+      }
+
+      const correctaDesc = q.fundamentoDetallado?.correcta || 'Opción correcta respaldada por guías clínicas.';
+      const descarteDesc = q.fundamentoDetallado?.descarte || 'Las demás opciones no corresponden al manejo o diagnóstico de elección.';
+
+      return {
+        id: q.id || (idx + 1),
+        pregunta: q.pregunta,
+        opciones: q.opciones,
+        respuestaCorrecta: typeof q.respuestaCorrecta === 'number' ? q.respuestaCorrecta : 0,
+        especialidad,
+        anio: q.anio || '2024',
+        dificultad: ['Fácil', 'Intermedio', 'Difícil'].includes(q.dificultad) ? q.dificultad : 'Intermedio',
+        fundamentoDetallado: {
+          correcta: correctaDesc,
+          descarte: descarteDesc
+        },
+        fundamento: `${correctaDesc} Descarte: ${descarteDesc}`
+      };
+    });
 
     console.log(`[Gemini] Generadas exitosamente ${formattedQuestions.length} preguntas.`);
 

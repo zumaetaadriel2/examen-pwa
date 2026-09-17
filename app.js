@@ -11,8 +11,20 @@ const STORAGE_KEY_CUSTOM_EXAMS = 'pwa_custom_exams';
 const STORAGE_KEY_RANDOM_MODE = 'pwa_random_mode';
 const OFFICIAL_EXAM_ID = 'residentado_2026';
 
+// Las 8 Especialidades Base de Medicina Interna
+const SPECIALTIES_LIST = [
+  'Gastroenterología',
+  'Cardiología',
+  'Neumología',
+  'Nefrología',
+  'Hematología',
+  'Endocrinología',
+  'Reumatología',
+  'Infectología'
+];
+
 // Estado Global
-let ALL_EXAMS = [];              // Lista de todos los exámenes (oficial + personalizados)
+let ALL_EXAMS = [];              // Lista de todos los exámenes (oficial + personalizados + mix)
 let currentExam = null;          // Examen actualmente seleccionado
 let currentQuestions = [];       // Preguntas del examen en curso (original o barajadas)
 let currentQuestionIndex = 0;
@@ -20,6 +32,11 @@ let isRecallMode = false;
 let isFundamentoVisible = false;
 let deferredPrompt = null;
 let selectedPdfFile = null;
+
+// Estado para Auditoría y Modo Mix
+let pendingAuditExam = null;
+let selectedMixQty = 10;
+let selectedMixSpecialties = new Set(SPECIALTIES_LIST);
 
 // =============================================================================
 // 2. Elementos del DOM
@@ -38,10 +55,11 @@ const offlineTooltip = document.getElementById('offlineTooltip');
 const networkStatusEl = document.getElementById('networkStatus');
 const networkTextEl = document.getElementById('networkText');
 
-// Dashboard Elements
+// Dashboard Elements & Modo Mix Banner
 const toggleRandomMode = document.getElementById('toggleRandomMode');
 const examsTotalCount = document.getElementById('examsTotalCount');
 const examsGrid = document.getElementById('examsGrid');
+const btnOpenModoMix = document.getElementById('btnOpenModoMix');
 
 // Quiz View Elements
 const recallModeBanner = document.getElementById('recallModeBanner');
@@ -53,10 +71,18 @@ const questionCategoryEl = document.getElementById('questionCategory');
 const questionTitleEl = document.getElementById('questionTitle');
 const optionsListEl = document.getElementById('optionsList');
 
+// Metadata Badges (Especialidad, Año, Dificultad)
+const badgeSpecialty = document.getElementById('badgeSpecialty');
+const badgeYear = document.getElementById('badgeYear');
+const badgeDifficulty = document.getElementById('badgeDifficulty');
+
+// Fundamento Elements (Desglosado: Correcta vs Descarte)
 const btnFundamento = document.getElementById('btnFundamento');
 const btnFundamentoText = document.getElementById('btnFundamentoText');
 const fundamentoCard = document.getElementById('fundamentoCard');
-const fundamentoText = document.getElementById('fundamentoText');
+const fundamentoCorrectaText = document.getElementById('fundamentoCorrectaText');
+const fundamentoDescarteText = document.getElementById('fundamentoDescarteText');
+const fundamentoLegacyText = document.getElementById('fundamentoLegacyText');
 
 const btnPrev = document.getElementById('btnPrev');
 const btnNext = document.getElementById('btnNext');
@@ -92,6 +118,24 @@ const uploadErrorText = document.getElementById('uploadErrorText');
 const uploadLoadingState = document.getElementById('uploadLoadingState');
 const loadingStatusText = document.getElementById('loadingStatusText');
 const btnGenerateExam = document.getElementById('btnGenerateExam');
+
+// Modal Elements (Auditoría y Clasificación de PDF)
+const modalAuditPdf = document.getElementById('modalAuditPdf');
+const btnCloseAuditModal = document.getElementById('btnCloseAuditModal');
+const btnCancelAudit = document.getElementById('btnCancelAudit');
+const btnConfirmSaveExam = document.getElementById('btnConfirmSaveExam');
+const inputAuditExamTitle = document.getElementById('inputAuditExamTitle');
+const auditTotalQuestionsCount = document.getElementById('auditTotalQuestionsCount');
+const auditQuestionsContainer = document.getElementById('auditQuestionsContainer');
+
+// Modal Elements (Modo Mix / Simulacros Personalizados)
+const modalModoMix = document.getElementById('modalModoMix');
+const btnCloseMixModal = document.getElementById('btnCloseMixModal');
+const btnCancelMix = document.getElementById('btnCancelMix');
+const btnStartMixExam = document.getElementById('btnStartMixExam');
+const btnToggleAllSpecialties = document.getElementById('btnToggleAllSpecialties');
+const mixSpecialtiesGrid = document.getElementById('mixSpecialtiesGrid');
+const mixAvailableCount = document.getElementById('mixAvailableCount');
 
 // Toasts
 const toastContainerEl = document.getElementById('toastContainer');
@@ -512,7 +556,53 @@ function renderCurrentQuestion() {
   }
 
   questionTitleEl.textContent = currentQ.pregunta;
-  fundamentoText.textContent = currentQ.fundamento || 'Justificación oficial no disponible.';
+
+  // 2.1 Metadata Badges (Especialidad, Año, Dificultad)
+  const spec = currentQ.especialidad || 'Infectología';
+  const year = currentQ.anio || '2026';
+  const diff = currentQ.dificultad || 'Intermedio';
+
+  if (badgeSpecialty) badgeSpecialty.textContent = spec;
+  if (badgeYear) badgeYear.textContent = year;
+  if (badgeDifficulty) {
+    badgeDifficulty.textContent = diff;
+    badgeDifficulty.className = 'meta-badge badge-difficulty';
+    if (diff === 'Fácil') {
+      badgeDifficulty.classList.add('difficulty-easy');
+    } else if (diff === 'Difícil') {
+      badgeDifficulty.classList.add('difficulty-hard');
+    } else {
+      badgeDifficulty.classList.add('difficulty-medium');
+    }
+  }
+
+  // 2.2 Fundamentación Desglosada (Correcta vs Descarte)
+  if (currentQ.fundamentoDetallado && (currentQ.fundamentoDetallado.correcta || currentQ.fundamentoDetallado.descarte)) {
+    if (fundamentoCorrectaText) {
+      fundamentoCorrectaText.textContent = currentQ.fundamentoDetallado.correcta || 'Opción respaldada por guías clínicas.';
+      const block = fundamentoCorrectaText.closest('.fundamento-block');
+      if (block) block.style.display = 'block';
+    }
+    if (fundamentoDescarteText) {
+      fundamentoDescarteText.textContent = currentQ.fundamentoDetallado.descarte || 'Las demás alternativas se descartan por no ser la conducta de elección.';
+      const block = fundamentoDescarteText.closest('.fundamento-block');
+      if (block) block.style.display = 'block';
+    }
+    if (fundamentoLegacyText) fundamentoLegacyText.style.display = 'none';
+  } else {
+    if (fundamentoCorrectaText) {
+      const block = fundamentoCorrectaText.closest('.fundamento-block');
+      if (block) block.style.display = 'none';
+    }
+    if (fundamentoDescarteText) {
+      const block = fundamentoDescarteText.closest('.fundamento-block');
+      if (block) block.style.display = 'none';
+    }
+    if (fundamentoLegacyText) {
+      fundamentoLegacyText.style.display = 'block';
+      fundamentoLegacyText.textContent = currentQ.fundamento || 'Justificación oficial no disponible.';
+    }
+  }
 
   // 3. Opciones de respuesta
   optionsListEl.innerHTML = '';
@@ -930,31 +1020,16 @@ async function generateExamFromPdf() {
       throw new Error('Gemini no generó preguntas válidas para este documento.');
     }
 
-    // Crear nuevo examen en la plataforma
+    // Preparar datos y abrir panel de auditoría previa (NO guardar directamente)
     const examName = selectedPdfFile.name.replace(/\.pdf$/i, '');
-    const cleanTitle = examName.length > 35 ? examName.substring(0, 32) + '...' : examName;
-
-    const newExam = {
-      id: `custom_${Date.now()}`,
-      title: cleanTitle,
-      isOfficial: false,
-      date: new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
-      questions: newQuestions
-    };
-
-    // Guardar en la lista persistente de exámenes personalizados
-    const customExams = getCustomExams();
-    customExams.unshift(newExam);
-    saveCustomExams(customExams);
-
-    // Actualizar lista global
-    ALL_EXAMS.push(newExam);
+    const cleanTitle = examName.length > 40 ? examName.substring(0, 38) + '...' : examName;
 
     closeUploadModal();
-    renderDashboard();
-    showView('home');
-
-    showToast(`🎉 ¡Examen "${cleanTitle}" creado con ${newQuestions.length} preguntas!`);
+    openAuditModal({
+      title: cleanTitle,
+      filename: selectedPdfFile.name,
+      questions: newQuestions
+    });
 
   } catch (error) {
     stepTimeouts.forEach(clearTimeout);
@@ -964,6 +1039,323 @@ async function generateExamFromPdf() {
 }
 
 btnGenerateExam.addEventListener('click', generateExamFromPdf);
+
+// =============================================================================
+// 9. Módulo de Auditoría y Revisión de PDF (#modalAuditPdf)
+// =============================================================================
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function openAuditModal(examData) {
+  pendingAuditExam = examData;
+  if (!modalAuditPdf) return;
+
+  if (inputAuditExamTitle) {
+    inputAuditExamTitle.value = examData.title || 'Examen Clínico';
+  }
+  if (auditTotalQuestionsCount) {
+    auditTotalQuestionsCount.textContent = examData.questions.length;
+  }
+
+  if (auditQuestionsContainer) {
+    auditQuestionsContainer.innerHTML = '';
+
+    const optionLetters = ['A', 'B', 'C', 'D'];
+
+    examData.questions.forEach((q, idx) => {
+      const card = document.createElement('div');
+      card.className = 'audit-question-card';
+      card.setAttribute('data-idx', idx);
+
+      const correctLetter = optionLetters[q.respuestaCorrecta] || 'A';
+      const cleanSnippet = q.pregunta ? q.pregunta.slice(0, 160) : '';
+
+      card.innerHTML = `
+        <div class="audit-q-header">
+          <div class="audit-q-snippet">
+            <strong>#${idx + 1}:</strong> ${escapeHtml(cleanSnippet)}${q.pregunta && q.pregunta.length > 160 ? '...' : ''}
+          </div>
+          <div class="audit-key-badge" title="Clave auditada por Gemini">
+            Clave: ${correctLetter}
+          </div>
+        </div>
+
+        <div class="audit-q-controls">
+          <div class="audit-control-group">
+            <label>Especialidad:</label>
+            <select class="audit-select audit-select-specialty" data-idx="${idx}">
+              ${SPECIALTIES_LIST.map(s => `
+                <option value="${s}" ${q.especialidad === s ? 'selected' : ''}>${s}</option>
+              `).join('')}
+            </select>
+          </div>
+
+          <div class="audit-control-group">
+            <label>Año:</label>
+            <input type="text" class="audit-input audit-input-year" data-idx="${idx}" value="${escapeHtml(q.anio || '2024')}" maxlength="4">
+          </div>
+
+          <div class="audit-control-group">
+            <label>Dificultad:</label>
+            <select class="audit-select audit-select-difficulty" data-idx="${idx}">
+              <option value="Fácil" ${q.dificultad === 'Fácil' ? 'selected' : ''}>Fácil</option>
+              <option value="Intermedio" ${(!q.dificultad || q.dificultad === 'Intermedio') ? 'selected' : ''}>Intermedio</option>
+              <option value="Difícil" ${q.dificultad === 'Difícil' ? 'selected' : ''}>Difícil</option>
+            </select>
+          </div>
+        </div>
+      `;
+
+      auditQuestionsContainer.appendChild(card);
+    });
+  }
+
+  modalAuditPdf.style.display = 'flex';
+  modalAuditPdf.setAttribute('aria-hidden', 'false');
+}
+
+function closeAuditModal() {
+  if (!modalAuditPdf) return;
+  modalAuditPdf.style.display = 'none';
+  modalAuditPdf.setAttribute('aria-hidden', 'true');
+  pendingAuditExam = null;
+}
+
+function confirmSaveAuditedExam() {
+  if (!pendingAuditExam || !Array.isArray(pendingAuditExam.questions)) {
+    closeAuditModal();
+    return;
+  }
+
+  const finalTitle = inputAuditExamTitle ? (inputAuditExamTitle.value.trim() || pendingAuditExam.title) : pendingAuditExam.title;
+
+  // Leer campos modificados en la auditoría
+  const cards = auditQuestionsContainer ? auditQuestionsContainer.querySelectorAll('.audit-question-card') : [];
+  cards.forEach(card => {
+    const idx = parseInt(card.getAttribute('data-idx'), 10);
+    if (!isNaN(idx) && pendingAuditExam.questions[idx]) {
+      const selectSpec = card.querySelector('.audit-select-specialty');
+      const inputYear = card.querySelector('.audit-input-year');
+      const selectDiff = card.querySelector('.audit-select-difficulty');
+
+      if (selectSpec) pendingAuditExam.questions[idx].especialidad = selectSpec.value;
+      if (inputYear && inputYear.value.trim()) pendingAuditExam.questions[idx].anio = inputYear.value.trim();
+      if (selectDiff) pendingAuditExam.questions[idx].dificultad = selectDiff.value;
+    }
+  });
+
+  const newExam = {
+    id: `custom_${Date.now()}`,
+    title: finalTitle,
+    isOfficial: false,
+    date: new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
+    questions: pendingAuditExam.questions
+  };
+
+  // Guardar en la lista persistente de exámenes personalizados
+  const customExams = getCustomExams();
+  customExams.unshift(newExam);
+  saveCustomExams(customExams);
+
+  // Actualizar lista global
+  ALL_EXAMS.push(newExam);
+
+  closeAuditModal();
+  renderDashboard();
+  showView('home');
+
+  showToast(`🎉 ¡Examen "${finalTitle}" confirmado con ${newExam.questions.length} preguntas!`);
+}
+
+if (btnCloseAuditModal) btnCloseAuditModal.addEventListener('click', closeAuditModal);
+if (btnCancelAudit) btnCancelAudit.addEventListener('click', closeAuditModal);
+if (btnConfirmSaveExam) btnConfirmSaveExam.addEventListener('click', confirmSaveAuditedExam);
+
+if (modalAuditPdf) {
+  modalAuditPdf.addEventListener('click', (e) => {
+    if (e.target === modalAuditPdf) closeAuditModal();
+  });
+}
+
+// =============================================================================
+// 10. Módulo 'Modo Mix (Simulacros Personalizados)'
+// =============================================================================
+
+function getBankQuestionsBySpecialty() {
+  const pool = {};
+  SPECIALTIES_LIST.forEach(s => pool[s] = []);
+
+  ALL_EXAMS.forEach(exam => {
+    if (exam.isMix) return; // Evitar duplicar simulacros mix previos
+    if (Array.isArray(exam.questions)) {
+      exam.questions.forEach(q => {
+        const spec = q.especialidad || 'Infectología';
+        if (!pool[spec]) pool[spec] = [];
+        pool[spec].push({
+          ...q,
+          parentExamTitle: exam.title
+        });
+      });
+    }
+  });
+
+  return pool;
+}
+
+function updateMixAvailableCount() {
+  if (!mixAvailableCount) return;
+  const pool = getBankQuestionsBySpecialty();
+  let totalAvailable = 0;
+
+  selectedMixSpecialties.forEach(spec => {
+    if (pool[spec]) totalAvailable += pool[spec].length;
+  });
+
+  mixAvailableCount.textContent = `${totalAvailable} preguntas`;
+
+  if (btnToggleAllSpecialties) {
+    const allSelected = selectedMixSpecialties.size === SPECIALTIES_LIST.length;
+    btnToggleAllSpecialties.textContent = allSelected ? 'Deseleccionar Todas' : 'Seleccionar Todas';
+  }
+}
+
+function renderMixSpecialtiesSelector() {
+  if (!mixSpecialtiesGrid) return;
+  mixSpecialtiesGrid.innerHTML = '';
+  const pool = getBankQuestionsBySpecialty();
+
+  SPECIALTIES_LIST.forEach(spec => {
+    const count = (pool[spec] || []).length;
+    const isChecked = selectedMixSpecialties.has(spec);
+
+    const item = document.createElement('div');
+    item.className = `mix-specialty-item ${isChecked ? 'checked' : ''}`;
+    item.setAttribute('data-specialty', spec);
+
+    item.innerHTML = `
+      <div class="mix-specialty-left">
+        <input type="checkbox" class="mix-checkbox" ${isChecked ? 'checked' : ''}>
+        <span>${spec}</span>
+      </div>
+      <span class="mix-spec-count">${count}</span>
+    `;
+
+    item.addEventListener('click', (e) => {
+      const cb = item.querySelector('.mix-checkbox');
+      if (e.target !== cb) {
+        cb.checked = !cb.checked;
+      }
+      if (cb.checked) {
+        selectedMixSpecialties.add(spec);
+        item.classList.add('checked');
+      } else {
+        selectedMixSpecialties.delete(spec);
+        item.classList.remove('checked');
+      }
+      updateMixAvailableCount();
+    });
+
+    mixSpecialtiesGrid.appendChild(item);
+  });
+
+  updateMixAvailableCount();
+}
+
+function openModoMixModal() {
+  if (!modalModoMix) return;
+  renderMixSpecialtiesSelector();
+  modalModoMix.style.display = 'flex';
+  modalModoMix.setAttribute('aria-hidden', 'false');
+}
+
+function closeMixModal() {
+  if (!modalModoMix) return;
+  modalModoMix.style.display = 'none';
+  modalModoMix.setAttribute('aria-hidden', 'true');
+}
+
+function startMixExamSession() {
+  if (selectedMixSpecialties.size === 0) {
+    showToast('⚠️ Selecciona al menos una especialidad médica.');
+    return;
+  }
+
+  const pool = getBankQuestionsBySpecialty();
+  let candidateQuestions = [];
+
+  selectedMixSpecialties.forEach(spec => {
+    if (pool[spec]) candidateQuestions.push(...pool[spec]);
+  });
+
+  if (candidateQuestions.length === 0) {
+    showToast('⚠️ No hay preguntas disponibles para las especialidades seleccionadas.');
+    return;
+  }
+
+  // Barajar con Fisher-Yates
+  const shuffled = shuffleArray(candidateQuestions);
+  const sampleCount = Math.min(selectedMixQty, shuffled.length);
+  const sampledQuestions = shuffled.slice(0, sampleCount).map((q, idx) => ({
+    ...q,
+    id: idx + 1
+  }));
+
+  const mixExam = {
+    id: `mix_${Date.now()}`,
+    title: `Simulacro Mix (${sampledQuestions.length} Preguntas)`,
+    isOfficial: false,
+    isMix: true,
+    date: 'Simulacro Adaptativo',
+    questions: sampledQuestions
+  };
+
+  ALL_EXAMS.push(mixExam);
+  closeMixModal();
+  startExam(mixExam.id);
+  showToast(`🚀 ¡Iniciando Modo Mix con ${sampledQuestions.length} preguntas!`);
+}
+
+// Event Listeners Modo Mix
+if (btnOpenModoMix) btnOpenModoMix.addEventListener('click', openModoMixModal);
+if (btnCloseMixModal) btnCloseMixModal.addEventListener('click', closeMixModal);
+if (btnCancelMix) btnCancelMix.addEventListener('click', closeMixModal);
+if (btnStartMixExam) btnStartMixExam.addEventListener('click', startMixExamSession);
+
+if (modalModoMix) {
+  modalModoMix.addEventListener('click', (e) => {
+    if (e.target === modalModoMix) closeMixModal();
+  });
+}
+
+// Selector de cantidad en Modo Mix (Pills)
+const qtyPills = document.querySelectorAll('.btn-qty-pill');
+qtyPills.forEach(pill => {
+  pill.addEventListener('click', () => {
+    qtyPills.forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+    selectedMixQty = parseInt(pill.getAttribute('data-qty'), 10) || 10;
+  });
+});
+
+if (btnToggleAllSpecialties) {
+  btnToggleAllSpecialties.addEventListener('click', () => {
+    const allSelected = selectedMixSpecialties.size === SPECIALTIES_LIST.length;
+    if (allSelected) {
+      selectedMixSpecialties.clear();
+    } else {
+      selectedMixSpecialties = new Set(SPECIALTIES_LIST);
+    }
+    renderMixSpecialtiesSelector();
+  });
+}
 
 // =============================================================================
 // 9. PWA Lifecycle y Notificaciones
