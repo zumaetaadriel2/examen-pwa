@@ -5,11 +5,33 @@
  */
 
 // =============================================================================
-// 1. Constantes y Claves de LocalStorage
+// 1. Constantes y Claves de LocalStorage (Sistema Modular por Categorías)
 // =============================================================================
-const STORAGE_KEY_CUSTOM_EXAMS = 'pwa_custom_exams';
+const STORAGE_KEY_CATEGORIES = 'pwa_categories';
+const STORAGE_KEY_ACTIVE_CATEGORY = 'pwa_active_category';
+const STORAGE_KEY_CUSTOM_EXAMS_LEGACY = 'pwa_custom_exams';
 const STORAGE_KEY_RANDOM_MODE = 'pwa_random_mode';
 const OFFICIAL_EXAM_ID = 'residentado_2026';
+const DEFAULT_CATEGORY_RESIDENTADO = 'residentado';
+const DEFAULT_CATEGORY_INTERNADO = 'internado';
+
+// Categorías Principales por Defecto
+const DEFAULT_CATEGORIES = [
+  {
+    id: 'residentado',
+    name: 'Residentado Médico',
+    icon: '🏥',
+    description: 'Banco oficial de Residentado Médico con 200 preguntas comentadas.',
+    isDefault: true
+  },
+  {
+    id: 'internado',
+    name: 'Internado Médico',
+    icon: '🩺',
+    description: 'Simulacros y bancos clínicos orientados al Internado Médico.',
+    isDefault: true
+  }
+];
 
 // Las 8 Especialidades Base de Medicina Interna
 const SPECIALTIES_LIST = [
@@ -24,7 +46,8 @@ const SPECIALTIES_LIST = [
 ];
 
 // Estado Global
-let ALL_EXAMS = [];              // Lista de todos los exámenes (oficial + personalizados + mix)
+let ALL_EXAMS = [];              // Exámenes de la categoría activa actualmente
+let officialExamBase = null;     // Examen base de 200 preguntas (categoría Residentado)
 let currentExam = null;          // Examen actualmente seleccionado
 let currentQuestions = [];       // Preguntas del examen en curso (original o barajadas)
 let currentQuestionIndex = 0;
@@ -37,6 +60,7 @@ let selectedPdfFile = null;
 let pendingAuditExam = null;
 let selectedMixQty = 10;
 let selectedMixSpecialties = new Set(SPECIALTIES_LIST);
+let selectedNewCatIcon = '📁';
 
 // =============================================================================
 // 2. Elementos del DOM
@@ -54,6 +78,14 @@ const uploadBtnWrap = document.getElementById('uploadBtnWrap');
 const offlineTooltip = document.getElementById('offlineTooltip');
 const networkStatusEl = document.getElementById('networkStatus');
 const networkTextEl = document.getElementById('networkText');
+
+// Categorías en Dashboard
+const categoryTabsList = document.getElementById('categoryTabsList');
+const btnOpenNewCategoryModal = document.getElementById('btnOpenNewCategoryModal');
+const mixCategoryBadge = document.getElementById('mixCategoryBadge');
+const mixBannerTitle = document.getElementById('mixBannerTitle');
+const mixBannerDesc = document.getElementById('mixBannerDesc');
+const examsSectionTitleText = document.getElementById('examsSectionTitleText');
 
 // Dashboard Elements & Modo Mix Banner
 const toggleRandomMode = document.getElementById('toggleRandomMode');
@@ -125,6 +157,7 @@ const btnCloseAuditModal = document.getElementById('btnCloseAuditModal');
 const btnCancelAudit = document.getElementById('btnCancelAudit');
 const btnConfirmSaveExam = document.getElementById('btnConfirmSaveExam');
 const inputAuditExamTitle = document.getElementById('inputAuditExamTitle');
+const selectAuditCategory = document.getElementById('selectAuditCategory');
 const auditTotalQuestionsCount = document.getElementById('auditTotalQuestionsCount');
 const auditQuestionsContainer = document.getElementById('auditQuestionsContainer');
 
@@ -137,79 +170,174 @@ const btnToggleAllSpecialties = document.getElementById('btnToggleAllSpecialties
 const mixSpecialtiesGrid = document.getElementById('mixSpecialtiesGrid');
 const mixAvailableCount = document.getElementById('mixAvailableCount');
 
+// Modal Elements (Nueva Categoría)
+const modalNewCategory = document.getElementById('modalNewCategory');
+const btnCloseNewCategoryModal = document.getElementById('btnCloseNewCategoryModal');
+const btnCancelNewCategory = document.getElementById('btnCancelNewCategory');
+const btnSaveNewCategory = document.getElementById('btnSaveNewCategory');
+const inputNewCategoryName = document.getElementById('inputNewCategoryName');
+const inputNewCategoryDesc = document.getElementById('inputNewCategoryDesc');
+const categoryIconPicker = document.getElementById('categoryIconPicker');
+
 // Toasts
 const toastContainerEl = document.getElementById('toastContainer');
 const toastMessageEl = document.getElementById('toastMessage');
 const toastTextEl = document.getElementById('toastText');
 
 // =============================================================================
-// 3. Gestión de Persistencia: Exámenes, Estado y Active Recall
+// 3. Gestión de Categorías y Persistencia Modular
 // =============================================================================
 
-function getCustomExams() {
+function getCategories() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_CUSTOM_EXAMS);
+    const raw = localStorage.getItem(STORAGE_KEY_CATEGORIES);
+    return raw ? JSON.parse(raw) : DEFAULT_CATEGORIES;
+  } catch (e) {
+    return DEFAULT_CATEGORIES;
+  }
+}
+
+function saveCategories(categories) {
+  localStorage.setItem(STORAGE_KEY_CATEGORIES, JSON.stringify(categories));
+}
+
+function getActiveCategoryId() {
+  return localStorage.getItem(STORAGE_KEY_ACTIVE_CATEGORY) || DEFAULT_CATEGORY_RESIDENTADO;
+}
+
+function setActiveCategoryId(catId) {
+  localStorage.setItem(STORAGE_KEY_ACTIVE_CATEGORY, catId);
+}
+
+function getCategoryExamsKey(catId) {
+  return `categoria_${catId}`;
+}
+
+function getCategoryCustomExams(catId) {
+  try {
+    const raw = localStorage.getItem(getCategoryExamsKey(catId));
     return raw ? JSON.parse(raw) : [];
   } catch (e) {
-    console.error('Error leyendo exámenes personalizados:', e);
+    console.error('Error leyendo exámenes de categoría:', catId, e);
     return [];
   }
 }
 
-function saveCustomExams(exams) {
-  localStorage.setItem(STORAGE_KEY_CUSTOM_EXAMS, JSON.stringify(exams));
+function saveCategoryCustomExams(catId, exams) {
+  localStorage.setItem(getCategoryExamsKey(catId), JSON.stringify(exams));
 }
 
-// Active Recall Independiente por Examen
-function getBolsaRepasoKey(examId) {
-  return `bolsaRepaso_${examId}`;
+/**
+ * Obtiene todos los exámenes de una categoría (incluyendo el oficial si es Residentado)
+ */
+function getExamsForCategory(catId) {
+  const custom = getCategoryCustomExams(catId);
+  if (catId === DEFAULT_CATEGORY_RESIDENTADO && officialExamBase) {
+    return [officialExamBase, ...custom];
+  }
+  return custom;
 }
 
-function getBolsaRepasoIds(examId) {
+/**
+ * Migración automática de datos legacy (pwa_custom_exams -> categoria_residentado)
+ */
+function migrateLegacyStorage() {
+  // 1. Asegurar categorías iniciales
+  if (!localStorage.getItem(STORAGE_KEY_CATEGORIES)) {
+    saveCategories(DEFAULT_CATEGORIES);
+  }
+  if (!localStorage.getItem(STORAGE_KEY_ACTIVE_CATEGORY)) {
+    setActiveCategoryId(DEFAULT_CATEGORY_RESIDENTADO);
+  }
+
+  // 2. Migrar pwa_custom_exams si existe y categoria_residentado aún no
+  const legacyCustom = localStorage.getItem(STORAGE_KEY_CUSTOM_EXAMS_LEGACY);
+  if (legacyCustom && !localStorage.getItem('categoria_residentado')) {
+    try {
+      const exams = JSON.parse(legacyCustom);
+      if (Array.isArray(exams)) {
+        const tagged = exams.map(e => ({ ...e, categoryId: DEFAULT_CATEGORY_RESIDENTADO }));
+        saveCategoryCustomExams(DEFAULT_CATEGORY_RESIDENTADO, tagged);
+      }
+    } catch (e) {
+      console.warn('Error en migración de exámenes legacy:', e);
+    }
+  }
+
+  // 3. Asegurar que categoria_internado exista como array
+  if (!localStorage.getItem('categoria_internado')) {
+    saveCategoryCustomExams(DEFAULT_CATEGORY_INTERNADO, []);
+  }
+}
+
+// Active Recall Independiente por Categoría y Examen
+function getBolsaRepasoKey(examId, categoryId = null) {
+  const cat = categoryId || (currentExam ? currentExam.categoryId : getActiveCategoryId());
+  return `bolsaRepaso_${cat}_${examId}`;
+}
+
+function getBolsaRepasoIds(examId, categoryId = null) {
+  const cat = categoryId || (currentExam ? currentExam.categoryId : getActiveCategoryId());
   try {
-    const raw = localStorage.getItem(getBolsaRepasoKey(examId));
+    const key = getBolsaRepasoKey(examId, cat);
+    let raw = localStorage.getItem(key);
+    // Fallback retroactivo si aún no se guardó con prefijo de categoría
+    if (!raw) {
+      raw = localStorage.getItem(`bolsaRepaso_${examId}`);
+    }
     return raw ? JSON.parse(raw) : [];
   } catch (e) {
     return [];
   }
 }
 
-function addToBolsaRepaso(examId, questionId) {
-  const ids = getBolsaRepasoIds(examId);
+function addToBolsaRepaso(examId, questionId, categoryId = null) {
+  const cat = categoryId || (currentExam ? currentExam.categoryId : getActiveCategoryId());
+  const ids = getBolsaRepasoIds(examId, cat);
   if (!ids.includes(questionId)) {
     ids.push(questionId);
-    localStorage.setItem(getBolsaRepasoKey(examId), JSON.stringify(ids));
+    localStorage.setItem(getBolsaRepasoKey(examId, cat), JSON.stringify(ids));
   }
 }
 
-function removeFromBolsaRepaso(examId, questionId) {
-  let ids = getBolsaRepasoIds(examId);
+function removeFromBolsaRepaso(examId, questionId, categoryId = null) {
+  const cat = categoryId || (currentExam ? currentExam.categoryId : getActiveCategoryId());
+  let ids = getBolsaRepasoIds(examId, cat);
   if (ids.includes(questionId)) {
     ids = ids.filter(id => id !== questionId);
-    localStorage.setItem(getBolsaRepasoKey(examId), JSON.stringify(ids));
+    localStorage.setItem(getBolsaRepasoKey(examId, cat), JSON.stringify(ids));
   }
 }
 
 // Estado del Examen (Respuestas marcadas, índice actual y orden barajado)
-function getExamStateKey(examId) {
-  return `exam_state_${examId}`;
+function getExamStateKey(examId, categoryId = null) {
+  const cat = categoryId || (currentExam ? currentExam.categoryId : getActiveCategoryId());
+  return `exam_state_${cat}_${examId}`;
 }
 
-function getExamState(examId) {
+function getExamState(examId, categoryId = null) {
+  const cat = categoryId || (currentExam ? currentExam.categoryId : getActiveCategoryId());
   try {
-    const raw = localStorage.getItem(getExamStateKey(examId));
+    const key = getExamStateKey(examId, cat);
+    let raw = localStorage.getItem(key);
+    if (!raw) {
+      raw = localStorage.getItem(`exam_state_${examId}`);
+    }
     return raw ? JSON.parse(raw) : { currentIndex: 0, answers: {}, isRandom: false, shuffledQuestions: null };
   } catch (e) {
     return { currentIndex: 0, answers: {}, isRandom: false, shuffledQuestions: null };
   }
 }
 
-function saveExamState(examId, state) {
-  localStorage.setItem(getExamStateKey(examId), JSON.stringify(state));
+function saveExamState(examId, state, categoryId = null) {
+  const cat = categoryId || (currentExam ? currentExam.categoryId : getActiveCategoryId());
+  localStorage.setItem(getExamStateKey(examId, cat), JSON.stringify(state));
 }
 
-function clearExamState(examId) {
-  localStorage.removeItem(getExamStateKey(examId));
+function clearExamState(examId, categoryId = null) {
+  const cat = categoryId || (currentExam ? currentExam.categoryId : getActiveCategoryId());
+  localStorage.removeItem(getExamStateKey(examId, cat));
+  localStorage.removeItem(`exam_state_${examId}`);
 }
 
 // Modo Aleatorio Global
@@ -280,56 +408,178 @@ async function initPlatform() {
     });
   }
 
-  // Cargar examen oficial desde preguntas.json
+  // 1. Migración y estructura de categorías
+  migrateLegacyStorage();
+
+  // 2. Cargar examen oficial desde preguntas.json (asignado a Residentado)
   try {
     const response = await fetch('./preguntas.json');
     const officialQuestions = await response.json();
 
-    const officialExam = {
+    officialExamBase = {
       id: OFFICIAL_EXAM_ID,
       title: 'Residentado Médico 2026',
       isOfficial: true,
+      categoryId: DEFAULT_CATEGORY_RESIDENTADO,
       date: 'Examen Oficial Comentado',
       questions: officialQuestions
     };
 
-    const customExams = getCustomExams();
-    ALL_EXAMS = [officialExam, ...customExams];
-
     renderDashboard();
     updateNetworkStatus();
   } catch (err) {
-    console.error('Error inicializando exámenes:', err);
+    console.error('Error inicializando examen oficial:', err);
     showToast('⚠️ Error al cargar el examen oficial.');
+    renderDashboard();
   }
 }
 
 /**
- * Renderiza todas las tarjetas de exámenes en el Dashboard
+ * Renderiza las pestañas de categorías en el Dashboard
+ */
+function renderCategoryTabs() {
+  if (!categoryTabsList) return;
+  categoryTabsList.innerHTML = '';
+
+  const categories = getCategories();
+  const activeCatId = getActiveCategoryId();
+
+  categories.forEach(cat => {
+    const tab = document.createElement('div');
+    tab.className = `category-tab ${cat.id === activeCatId ? 'active' : ''}`;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', cat.id === activeCatId ? 'true' : 'false');
+    tab.setAttribute('data-category-id', cat.id);
+
+    const exams = getExamsForCategory(cat.id);
+    const totalQ = exams.reduce((acc, e) => acc + (Array.isArray(e.questions) ? e.questions.length : 0), 0);
+
+    tab.innerHTML = `
+      <span class="category-tab-icon">${cat.icon || '📁'}</span>
+      <div class="category-tab-info">
+        <span class="category-tab-name">${escapeHtml(cat.name)}</span>
+        <span class="category-tab-stats">${totalQ} preg • ${exams.length} ${exams.length === 1 ? 'examen' : 'exámenes'}</span>
+      </div>
+      ${!cat.isDefault ? `
+        <button class="btn-delete-cat-pill" data-delete-cat="${cat.id}" title="Eliminar categoría" aria-label="Eliminar categoría">&times;</button>
+      ` : ''}
+    `;
+
+    tab.addEventListener('click', (e) => {
+      if (e.target.closest('.btn-delete-cat-pill')) return;
+      setActiveCategoryId(cat.id);
+      renderDashboard();
+    });
+
+    const delBtn = tab.querySelector('.btn-delete-cat-pill');
+    if (delBtn) {
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteCategory(cat.id);
+      });
+    }
+
+    categoryTabsList.appendChild(tab);
+  });
+}
+
+function deleteCategory(catId) {
+  const categories = getCategories();
+  const cat = categories.find(c => c.id === catId);
+  if (!cat || cat.isDefault) return;
+
+  const confirmDelete = confirm(`¿Estás seguro de que deseas eliminar la categoría "${cat.name}" y todos sus exámenes?`);
+  if (!confirmDelete) return;
+
+  localStorage.removeItem(getCategoryExamsKey(catId));
+  const updatedCats = categories.filter(c => c.id !== catId);
+  saveCategories(updatedCats);
+
+  if (getActiveCategoryId() === catId) {
+    setActiveCategoryId(DEFAULT_CATEGORY_RESIDENTADO);
+  }
+
+  renderDashboard();
+  showToast(`🗑️ Categoría "${cat.name}" eliminada.`);
+}
+
+/**
+ * Renderiza el Dashboard filtrado por la categoría activa
  */
 function renderDashboard() {
+  renderCategoryTabs();
+
+  const activeCatId = getActiveCategoryId();
+  const categories = getCategories();
+  const activeCategory = categories.find(c => c.id === activeCatId) || categories[0];
+
+  // Actualizar textos contextuales del Dashboard y Modo Mix
+  if (mixCategoryBadge) {
+    mixCategoryBadge.textContent = `✨ Simulador Adaptativo • ${activeCategory.name}`;
+  }
+  if (mixBannerTitle) {
+    mixBannerTitle.textContent = `Modo Mix: ${activeCategory.name}`;
+  }
+  if (mixBannerDesc) {
+    mixBannerDesc.textContent = `Combina preguntas del banco acumulado de ${activeCategory.name} con la cantidad que tú elijas.`;
+  }
+  if (examsSectionTitleText) {
+    examsSectionTitleText.textContent = `📚 Exámenes de ${activeCategory.name}`;
+  }
+
+  // Obtener exámenes exclusivos de esta categoría
+  ALL_EXAMS = getExamsForCategory(activeCatId);
+
   if (!examsGrid) return;
   examsGrid.innerHTML = '';
-
   examsTotalCount.textContent = ALL_EXAMS.length;
 
+  // Si la categoría no tiene exámenes aún, renderizar estado vacío amigable
+  if (ALL_EXAMS.length === 0) {
+    const emptyCard = document.createElement('div');
+    emptyCard.className = 'category-empty-card';
+    emptyCard.innerHTML = `
+      <div class="category-empty-icon">${activeCategory.icon || '📁'}</div>
+      <h4 class="category-empty-title">Aún no hay exámenes en ${escapeHtml(activeCategory.name)}</h4>
+      <p class="category-empty-desc">${escapeHtml(activeCategory.description || 'Sube un documento PDF para estructurar preguntas automáticamente con Gemini IA.')}</p>
+      <button class="btn-empty-upload" id="btnUploadInEmptyCategory">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <span>Subir PDF a ${escapeHtml(activeCategory.name)}</span>
+      </button>
+    `;
+
+    const emptyUploadBtn = emptyCard.querySelector('#btnUploadInEmptyCategory');
+    if (emptyUploadBtn) {
+      emptyUploadBtn.addEventListener('click', openUploadModal);
+    }
+
+    examsGrid.appendChild(emptyCard);
+    return;
+  }
+
+  // Renderizar tarjetas de exámenes
   ALL_EXAMS.forEach(exam => {
-    const totalQuestions = exam.questions.length;
-    const state = getExamState(exam.id);
+    const totalQuestions = Array.isArray(exam.questions) ? exam.questions.length : 0;
+    const state = getExamState(exam.id, exam.categoryId || activeCatId);
     const answers = state.answers || {};
     const answeredCount = Object.keys(answers).length;
 
-    // Calcular estadísticas globales
     let correctCount = 0;
-    exam.questions.forEach(q => {
-      if (answers[q.id] !== undefined && answers[q.id] === q.respuestaCorrecta) {
-        correctCount++;
-      }
-    });
+    if (Array.isArray(exam.questions)) {
+      exam.questions.forEach(q => {
+        if (answers[q.id] !== undefined && answers[q.id] === q.respuestaCorrecta) {
+          correctCount++;
+        }
+      });
+    }
 
     const accuracy = answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0;
-    const progressPercent = Math.round((answeredCount / totalQuestions) * 100);
-    const recallCount = getBolsaRepasoIds(exam.id).length;
+    const progressPercent = totalQuestions > 0 ? Math.round((answeredCount / totalQuestions) * 100) : 0;
+    const recallCount = getBolsaRepasoIds(exam.id, exam.categoryId || activeCatId).length;
 
     const card = document.createElement('div');
     card.className = 'exam-card';
@@ -337,11 +587,11 @@ function renderDashboard() {
 
     card.innerHTML = `
       <div class="exam-card-top">
-        <span class="exam-badge-type ${exam.isOfficial ? 'official' : 'custom'}">
-          ${exam.isOfficial ? 'Oficial CONAREME' : 'Generado con Gemini'}
+        <span class="exam-badge-type ${exam.isOfficial ? 'official' : (exam.isMix ? 'official' : 'custom')}">
+          ${exam.isOfficial ? 'Oficial CONAREME' : (exam.isMix ? 'Simulacro Mix' : 'Generado con Gemini')}
         </span>
         ${!exam.isOfficial ? `
-          <button class="btn-delete-exam" data-delete-id="${exam.id}" title="Eliminar examen y sus datos" aria-label="Eliminar examen">
+          <button class="btn-delete-exam" data-delete-id="${exam.id}" title="Eliminar examen de esta categoría" aria-label="Eliminar examen">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="3 6 5 6 21 6"/>
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -352,12 +602,12 @@ function renderDashboard() {
         ` : ''}
       </div>
 
-      <h3 class="exam-card-title">${exam.title}</h3>
+      <h3 class="exam-card-title">${escapeHtml(exam.title)}</h3>
 
       <div class="exam-card-meta">
         <span>📝 ${totalQuestions} preguntas</span>
         <span>•</span>
-        <span>${exam.date}</span>
+        <span>${escapeHtml(exam.date)}</span>
       </div>
 
       <div class="exam-progress-wrap">
@@ -385,7 +635,6 @@ function renderDashboard() {
       </div>
     `;
 
-    // Eventos de botones
     card.querySelector(`[data-start-id="${exam.id}"]`).addEventListener('click', () => {
       startExam(exam.id, false);
     });
@@ -406,26 +655,21 @@ function renderDashboard() {
   });
 }
 
-/**
- * Eliminar un examen personalizado
- */
 function deleteExam(examId) {
-  const exam = ALL_EXAMS.find(e => e.id === examId);
+  const activeCatId = getActiveCategoryId();
+  const exams = getCategoryCustomExams(activeCatId);
+  const exam = exams.find(e => e.id === examId);
   if (!exam) return;
 
-  const confirmDelete = confirm(`¿Estás seguro de que deseas eliminar el examen "${exam.title}" y todos sus progresos?`);
+  const confirmDelete = confirm(`¿Estás seguro de que deseas eliminar el examen "${exam.title}" de esta categoría?`);
   if (!confirmDelete) return;
 
-  // Filtrar de la lista
-  const customExams = getCustomExams().filter(e => e.id !== examId);
-  saveCustomExams(customExams);
+  const updatedExams = exams.filter(e => e.id !== examId);
+  saveCategoryCustomExams(activeCatId, updatedExams);
 
-  // Limpiar estado y bolsa de repaso
-  clearExamState(examId);
-  localStorage.removeItem(getBolsaRepasoKey(examId));
+  clearExamState(examId, activeCatId);
+  localStorage.removeItem(getBolsaRepasoKey(examId, activeCatId));
 
-  // Actualizar lista global
-  ALL_EXAMS = ALL_EXAMS.filter(e => e.id !== examId);
   renderDashboard();
   showToast('🗑️ Examen eliminado con éxito');
 }
@@ -472,13 +716,16 @@ btnResultsBackHome.addEventListener('click', () => {
  * Inicia una sesión de examen (normal o Active Recall)
  */
 function startExam(examId, recallOnly = false) {
-  currentExam = ALL_EXAMS.find(e => e.id === examId);
+  const activeCatId = getActiveCategoryId();
+  const categoryExams = getExamsForCategory(activeCatId);
+  currentExam = categoryExams.find(e => e.id === examId) || ALL_EXAMS.find(e => e.id === examId);
   if (!currentExam) return;
 
+  const catId = currentExam.categoryId || activeCatId;
   isRecallMode = recallOnly;
 
   if (isRecallMode) {
-    const failedIds = getBolsaRepasoIds(examId);
+    const failedIds = getBolsaRepasoIds(examId, catId);
     if (failedIds.length === 0) {
       showToast('🎉 ¡Excelente! No tienes preguntas falladas en este examen.');
       return;
@@ -491,7 +738,7 @@ function startExam(examId, recallOnly = false) {
   } else {
     recallModeBanner.style.display = 'none';
     const useRandom = isRandomModeActive();
-    const state = getExamState(examId);
+    const state = getExamState(examId, catId);
 
     // Si hay un estado previo guardado con el mismo modo aleatorio, restaurar
     if (state && state.shuffledQuestions && state.isRandom === useRandom) {
@@ -512,11 +759,11 @@ function startExam(examId, recallOnly = false) {
         answers: {},
         isRandom: useRandom,
         shuffledQuestions: currentQuestions
-      });
+      }, catId);
     }
 
     // Reconstruir userAnswers a partir de los IDs guardados en state.answers
-    const currentSavedState = getExamState(examId);
+    const currentSavedState = getExamState(examId, catId);
     const answersMap = currentSavedState.answers || {};
     userAnswers = currentQuestions.map(q => (answersMap[q.id] !== undefined ? answersMap[q.id] : null));
   }
@@ -1065,6 +1312,23 @@ function openAuditModal(examData) {
     auditTotalQuestionsCount.textContent = examData.questions.length;
   }
 
+  // Poblar dinámicamente las categorías disponibles en el selector
+  if (selectAuditCategory) {
+    selectAuditCategory.innerHTML = '';
+    const categories = getCategories();
+    const activeCatId = getActiveCategoryId();
+
+    categories.forEach(cat => {
+      const opt = document.createElement('option');
+      opt.value = cat.id;
+      opt.textContent = `${cat.icon || '📁'} ${cat.name}`;
+      if (cat.id === activeCatId) {
+        opt.selected = true;
+      }
+      selectAuditCategory.appendChild(opt);
+    });
+  }
+
   if (auditQuestionsContainer) {
     auditQuestionsContainer.innerHTML = '';
 
@@ -1136,6 +1400,7 @@ function confirmSaveAuditedExam() {
   }
 
   const finalTitle = inputAuditExamTitle ? (inputAuditExamTitle.value.trim() || pendingAuditExam.title) : pendingAuditExam.title;
+  const targetCategory = selectAuditCategory ? selectAuditCategory.value : getActiveCategoryId();
 
   // Leer campos modificados en la auditoría
   const cards = auditQuestionsContainer ? auditQuestionsContainer.querySelectorAll('.audit-question-card') : [];
@@ -1155,24 +1420,29 @@ function confirmSaveAuditedExam() {
   const newExam = {
     id: `custom_${Date.now()}`,
     title: finalTitle,
+    categoryId: targetCategory,
     isOfficial: false,
     date: new Date().toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }),
     questions: pendingAuditExam.questions
   };
 
-  // Guardar en la lista persistente de exámenes personalizados
-  const customExams = getCustomExams();
-  customExams.unshift(newExam);
-  saveCustomExams(customExams);
+  // Guardar en la lista persistente de la categoría asignada
+  const categoryExams = getCategoryCustomExams(targetCategory);
+  categoryExams.unshift(newExam);
+  saveCategoryCustomExams(targetCategory, categoryExams);
 
-  // Actualizar lista global
-  ALL_EXAMS.push(newExam);
+  // Seleccionar la categoría de destino para ver de inmediato el examen
+  setActiveCategoryId(targetCategory);
 
   closeAuditModal();
   renderDashboard();
   showView('home');
 
-  showToast(`🎉 ¡Examen "${finalTitle}" confirmado con ${newExam.questions.length} preguntas!`);
+  const categories = getCategories();
+  const catObj = categories.find(c => c.id === targetCategory);
+  const catName = catObj ? catObj.name : 'Categoría';
+
+  showToast(`🎉 ¡Examen "${finalTitle}" guardado en "${catName}" con ${newExam.questions.length} preguntas!`);
 }
 
 if (btnCloseAuditModal) btnCloseAuditModal.addEventListener('click', closeAuditModal);
@@ -1186,14 +1456,100 @@ if (modalAuditPdf) {
 }
 
 // =============================================================================
-// 10. Módulo 'Modo Mix (Simulacros Personalizados)'
+// 10. Modal para Crear Nueva Categoría / Proyecto (#modalNewCategory)
 // =============================================================================
 
-function getBankQuestionsBySpecialty() {
+function openNewCategoryModal() {
+  if (!modalNewCategory) return;
+  if (inputNewCategoryName) inputNewCategoryName.value = '';
+  if (inputNewCategoryDesc) inputNewCategoryDesc.value = '';
+  selectedNewCatIcon = '📁';
+
+  if (categoryIconPicker) {
+    const iconPills = categoryIconPicker.querySelectorAll('.btn-icon-pill');
+    iconPills.forEach(p => p.classList.remove('active'));
+    const defaultPill = categoryIconPicker.querySelector('[data-icon="📁"]');
+    if (defaultPill) defaultPill.classList.add('active');
+  }
+
+  modalNewCategory.style.display = 'flex';
+  modalNewCategory.setAttribute('aria-hidden', 'false');
+  if (inputNewCategoryName) inputNewCategoryName.focus();
+}
+
+function closeNewCategoryModal() {
+  if (!modalNewCategory) return;
+  modalNewCategory.style.display = 'none';
+  modalNewCategory.setAttribute('aria-hidden', 'true');
+}
+
+function createNewCategory() {
+  const name = inputNewCategoryName ? inputNewCategoryName.value.trim() : '';
+  if (!name) {
+    showToast('⚠️ Ingresa un nombre para la categoría.');
+    if (inputNewCategoryName) inputNewCategoryName.focus();
+    return;
+  }
+
+  const desc = inputNewCategoryDesc ? inputNewCategoryDesc.value.trim() : '';
+  const newCatId = `cat_${Date.now()}`;
+
+  const newCategory = {
+    id: newCatId,
+    name: name,
+    icon: selectedNewCatIcon || '📁',
+    description: desc || `Banco y simulacros para ${name}.`,
+    isDefault: false
+  };
+
+  const categories = getCategories();
+  categories.push(newCategory);
+  saveCategories(categories);
+
+  // Inicializar almacenamiento de exámenes vacío para la categoría
+  saveCategoryCustomExams(newCatId, []);
+
+  // Activar la nueva categoría de inmediato
+  setActiveCategoryId(newCatId);
+
+  closeNewCategoryModal();
+  renderDashboard();
+  showToast(`📁 Categoría "${name}" creada exitosamente.`);
+}
+
+if (btnOpenNewCategoryModal) btnOpenNewCategoryModal.addEventListener('click', openNewCategoryModal);
+if (btnCloseNewCategoryModal) btnCloseNewCategoryModal.addEventListener('click', closeNewCategoryModal);
+if (btnCancelNewCategory) btnCancelNewCategory.addEventListener('click', closeNewCategoryModal);
+if (btnSaveNewCategory) btnSaveNewCategory.addEventListener('click', createNewCategory);
+
+if (modalNewCategory) {
+  modalNewCategory.addEventListener('click', (e) => {
+    if (e.target === modalNewCategory) closeNewCategoryModal();
+  });
+}
+
+if (categoryIconPicker) {
+  const iconPills = categoryIconPicker.querySelectorAll('.btn-icon-pill');
+  iconPills.forEach(pill => {
+    pill.addEventListener('click', () => {
+      iconPills.forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      selectedNewCatIcon = pill.getAttribute('data-icon') || '📁';
+    });
+  });
+}
+
+// =============================================================================
+// 11. Módulo 'Modo Mix (Simulacros Personalizados)' Aislado por Categoría
+// =============================================================================
+
+function getBankQuestionsBySpecialty(catId = null) {
+  const targetCatId = catId || getActiveCategoryId();
+  const exams = getExamsForCategory(targetCatId);
   const pool = {};
   SPECIALTIES_LIST.forEach(s => pool[s] = []);
 
-  ALL_EXAMS.forEach(exam => {
+  exams.forEach(exam => {
     if (exam.isMix) return; // Evitar duplicar simulacros mix previos
     if (Array.isArray(exam.questions)) {
       exam.questions.forEach(q => {
@@ -1288,7 +1644,8 @@ function startMixExamSession() {
     return;
   }
 
-  const pool = getBankQuestionsBySpecialty();
+  const activeCatId = getActiveCategoryId();
+  const pool = getBankQuestionsBySpecialty(activeCatId);
   let candidateQuestions = [];
 
   selectedMixSpecialties.forEach(spec => {
@@ -1296,7 +1653,7 @@ function startMixExamSession() {
   });
 
   if (candidateQuestions.length === 0) {
-    showToast('⚠️ No hay preguntas disponibles para las especialidades seleccionadas.');
+    showToast('⚠️ No hay preguntas disponibles en esta categoría para las especialidades seleccionadas.');
     return;
   }
 
@@ -1308,11 +1665,15 @@ function startMixExamSession() {
     id: idx + 1
   }));
 
+  const activeCategory = getCategories().find(c => c.id === activeCatId);
+  const catName = activeCategory ? activeCategory.name : 'Categoría';
+
   const mixExam = {
     id: `mix_${Date.now()}`,
-    title: `Simulacro Mix (${sampledQuestions.length} Preguntas)`,
+    title: `Simulacro Mix (${sampledQuestions.length} Preguntas) - ${catName}`,
     isOfficial: false,
     isMix: true,
+    categoryId: activeCatId,
     date: 'Simulacro Adaptativo',
     questions: sampledQuestions
   };

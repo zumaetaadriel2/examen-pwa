@@ -209,9 +209,14 @@ Para cada pregunta debes:
       console.warn('No se pudo escribir preguntas_generadas.json en disco:', saveErr);
     }
 
+    const targetCategory = (req.body && (req.body.categoria || req.body.categoryId))
+      ? String(req.body.categoria || req.body.categoryId).trim()
+      : 'residentado';
+
     return res.json({
       success: true,
       filename: pdfFile.name,
+      categoria: targetCategory,
       total: formattedQuestions.length,
       preguntas: formattedQuestions
     });
