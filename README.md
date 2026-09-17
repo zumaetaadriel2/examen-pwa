@@ -1,119 +1,169 @@
-# PWA Quiz & Evaluador Interactivo
+# QuizMaster: Plataforma AI de Banqueo & Simulador Médico (PWA)
 
-Una **Progressive Web App (PWA)** moderna, *mobile-first* y *offline-first*, diseñada específicamente para ofrecer una experiencia fluida e intuitiva en pantallas táctiles de dispositivos móviles. El sistema permite realizar evaluaciones interactivas paso a paso, con retroalimentación instantánea, seguimiento de progreso y fundamento de respuestas al concluir cada prueba.
+[![PWA](https://img.shields.io/badge/PWA-Ready-4f46e5?style=flat-square&logo=pwa)](https://developer.mozilla.org/es/docs/Web/Progressive_web_apps)
+[![Gemini 2.5 Flash](https://img.shields.io/badge/AI-Gemini%202.5%20Flash-06b6d4?style=flat-square&logo=google)](https://ai.google.dev/)
+[![Offline First](https://img.shields.io/badge/Offline-quizmaster--pwa--v6-10b981?style=flat-square)](sw.js)
+[![License: MIT](https://img.shields.io/badge/License-MIT-gray?style=flat-square)](LICENSE)
 
----
-
-## 🚀 Características Principales
-
-- 📱 **Diseño Mobile-First & Ergonomía Táctil**:
-  - Interfaz adaptada con objetivos táctiles amplios (*touch targets* superiores a 52px de altura).
-  - Efectos visuales de presión háptica (`transform: scale(0.98)`) y soporte para áreas seguras de pantalla (`safe-area-inset-top` y `safe-area-inset-bottom`).
-- ⚡ **Arquitectura Offline-First (Service Worker)**:
-  - Cacheo integral de recursos estáticos mediante `sw.js` con estrategia *Cache-First*.
-  - La aplicación carga y funciona al 100% sin necesidad de conexión a internet activa.
-- 📲 **Instalable en Dispositivos Móviles**:
-  - Cumple los estándares de PWA con `manifest.json` (modo `standalone` sin barras de navegación del navegador).
-  - Detección automática del evento `beforeinstallprompt` con botón de instalación personalizado.
-- 📊 **Progreso en Tiempo Real**:
-  - Barra superior dinámica con indicador textual (*"Pregunta X de Y"*) y barra de llenado porcentual animada.
-- 🧭 **Navegación Intuitiva**:
-  - Visualización de una sola pregunta a la vez para máxima concentración.
-  - Botones ergonómicos de *Anterior*, *Siguiente* y *Finalizar Examen*.
-- 🎯 **Evaluador y Feedback Instantáneo**:
-  - Pantalla final de resultados con cálculo automático de aciertos, errores, precisión porcentual, estatus de aprobación y opción de reintento.
-- 📶 **Detector de Conectividad en Vivo**:
-  - Indicador dinámico del estado de la red (*En línea / Sin conexión*) con notificaciones flotantes (*toasts*).
+**QuizMaster** es una **Progressive Web App (PWA)** de alto rendimiento diseñada para la preparación médica de alta exigencia (Residentado Médico, Internado Médico, ENAM, EsSalud). Integra una **arquitectura multi-proyecto**, procesamiento automatizado de PDFs mediante **Gemini 2.5 Flash**, auditoría médica de claves y alternativas, generador adaptativo **Modo Mix** y un sistema de estudio basado en **Active Recall (Repaso Activo)** con funcionamiento 100% offline.
 
 ---
 
-## 🛠️ Instrucciones para Ejecutar Localmente
+## 🌟 Características Clave
 
-Sigue estos sencillos pasos para probar el proyecto en tu entorno de desarrollo:
+### 1. 📁 Arquitectura de Proyectos y Categorías Independientes
+- **Aislamiento Total de Bancos**: Cada categoría funciona como un contenedor o proyecto independiente que almacena sus propios exámenes, banco acumulado de preguntas, historial y bolsas de Active Recall.
+- **Categorías Predeterminadas Protegidas**:
+  - 🏥 **Residentado Médico**: Incluye el examen oficial comentado de 200 preguntas desglosadas.
+  - 🩺 **Internado Médico**: Entorno limpio y preparado para bancos de pre-internado.
+- **Creación Dinámica de Nuevas Categorías (`+ Nueva Categoría`)**:
+  - Los usuarios pueden crear entornos de estudio personalizados (ej. *ENAM 2026*, *EsSalud*, *Medicina 2027*), asignándoles un icono identificador temático (📁, 🏥, 🩺, 📚, 🔬, 💊, 🧠, 🎯).
+  - Las categorías personalizadas pueden eliminarse de forma segura sin afectar a los demás proyectos.
 
-### 1. Clonar o ingresar al directorio del proyecto
+---
+
+### 2. 🤖 Auditoría de PDFs Impulsada por IA (Gemini 2.5 Flash)
+- **Extracción Estructurada con el SDK `@google/genai`**: Procesa exámenes médicos en PDF convirtiéndolos a Base64 y consultando el modelo `gemini-2.5-flash` con esquema de respuesta estricto (`responseSchema`).
+- **Auditoría Clínica de Claves**: La IA audita el documento para detectar o verificar la respuesta correcta (índice 0 a 3 para opciones A, B, C, D).
+- **Clasificación en 8 Especialidades Base de Medicina Interna**:
+  1. Gastroenterología
+  2. Cardiología
+  3. Neumología
+  4. Nefrología
+  5. Hematología
+  6. Endocrinología
+  7. Reumatología
+  8. Infectología
+- **Estimación de Año y Nivel de Dificultad**: Detección del año de examen y graduación clínica cromática: Fácil (🟢), Intermedio (🟡) o Difícil (🔴).
+- **Fundamentación Clínica Desglosada**:
+  - ✔ **¿Por qué es la opción correcta?**: Justificación médica, fisiopatológica o normativa de la clave.
+  - ✖ **Descarte de alternativas**: Explicación puntual de por qué las alternativas restantes son incorrectas.
+
+---
+
+### 3. 🩺 Modal de Auditoría y Clasificación Manual
+- Previo al guardado en el banco, el sistema abre la vista de auditoría (`#modalAuditPdf`):
+  - **Asignación de Categoría Destino**: Selector desplegable para dirigir el examen al proyecto correspondiente (ej. asignarlo a *Internado Médico* o a una categoría personalizada).
+  - **Edición Manual**: Permite reclasificar la especialidad, ajustar el año o modificar la dificultad de cada pregunta individual.
+  - **Verificación de Clave**: Badge visible con la letra correcta detectada.
+
+---
+
+### 4. 🔀 Simulador Adaptativo (Modo Mix) Aislado por Categoría
+- **Generador de Pruebas Personalizadas**: Permite configurar un simulacro seleccionando:
+  - **Cantidad de preguntas**: 10, 20, 50 o 100 preguntas.
+  - **Filtro de especialidades**: Rejilla interactiva con las 8 especialidades y contador en tiempo real de preguntas disponibles.
+- **Aislamiento Estricto**: El Modo Mix extrae preguntas **únicamente** del banco acumulado de la categoría activa, evitando mezclar temas de diferentes proyectos.
+
+---
+
+### 5. 🧠 Active Recall & Repaso Inteligente
+- **Bolsa de Preguntas Falladas**: Cada examen registra las preguntas respondidas incorrectamente en una lista persistente (`bolsaRepaso_${catId}_${examId}`).
+- **Modo Repaso Activo**: Permite reintentar exclusivamente las preguntas falladas hasta dominar el contenido. Al acertarlas, se retiran automáticamente de la bolsa.
+- **Aleatorización Inteligente (Algoritmo Fisher-Yates)**: Toggle global de *Modo Aleatorio* que permuta tanto el orden de las preguntas como el de las alternativas (A, B, C, D), recalculando automáticamente la clave correcta.
+
+---
+
+### 6. ⚡ Soporte Offline PWA & Detección de Red
+- **Service Worker (`quizmaster-pwa-v6`)**: Estrategia de caché *Network-First* con fallback a caché local para un arranque instantáneo sin conexión.
+- **Detección Inteligente de Red**:
+  - Si el dispositivo pierde la conexión, el botón *Cargar PDF* se deshabilita automáticamente y muestra un tooltip explicativo, protegiendo al usuario de fallos con la API de Gemini.
+  - Al restaurar la conexión, se habilita nuevamente y emite una notificación *toast*.
+
+---
+
+## 🛠️ Guía de Instalación y Uso Local
+
+### Prerrequisitos
+- [Node.js](https://nodejs.org/) (versión 18 o superior recomendada).
+- Una clave de API de Google Gemini ([Google AI Studio](https://aistudio.google.com/)).
+
+### 1. Clonar el repositorio
 ```bash
+git clone https://github.com/zumaetaadriel2/examen-pwa.git
 cd examen-pwa
 ```
 
-### 2. Instalar dependencias (opcional / no requiere paquetes externos)
+### 2. Instalar dependencias
 ```bash
 npm install
 ```
 
-### 3. Iniciar el servidor local
-Puedes iniciar el servidor incluido con npm:
+### 3. Configurar variables de entorno (`.env`)
+Crea un archivo `.env` en la raíz del proyecto con tu API Key de Gemini:
+```env
+GEMINI_API_KEY=tu_clave_de_api_aqui
+PORT=3000
+```
+
+### 4. Iniciar el servidor
 ```bash
 npm start
 ```
-o ejecutando directamente con Node.js:
+o directamente con Node:
 ```bash
 node server.js
 ```
 
-### 4. Abrir en el navegador
-Ingresa a la siguiente dirección en tu navegador:
+### 5. Abrir la aplicación
+Ingresa desde tu navegador a:
 ```
 http://localhost:3000
 ```
-> **Tip para pruebas móviles en PC**: Presiona `F12` en Google Chrome o Edge y activa la vista de emulación de dispositivos móviles (`Ctrl + Shift + M`) para simular la pantalla de un celular (ej. iPhone 14 Pro o Samsung Galaxy).
 
 ---
 
-## 📱 Instrucciones para Instalar en el Celular
+## 📱 Instrucciones para Instalación PWA en Móviles
 
-Una vez desplegada en un servidor con HTTPS (o accesible en tu red local):
+La plataforma cumple con los estándares web modernos y puede instalarse como una aplicación nativa en dispositivos móviles y de escritorio:
 
 ### En Android (Google Chrome)
-1. Abre la aplicación en Google Chrome.
-2. Si el sistema detecta la compatibilidad PWA, pulsa el botón **"Instalar"** situado en la cabecera superior.
-3. Alternativamente, pulsa el menú de los tres puntos verticales (`⋮`) en la esquina superior derecha y selecciona **"Agregar a la pantalla de inicio"** o **"Instalar aplicación"**.
-4. La app se agregará a tu cajón de aplicaciones y pantalla de inicio con su icono nativo y se ejecutará a pantalla completa sin la barra del navegador.
+1. Abre [http://localhost:3000](http://localhost:3000) (o el dominio público donde esté alojada con HTTPS) en Google Chrome.
+2. Toca el botón **"Instalar"** que aparece en la cabecera superior de la aplicación.
+3. Si no aparece, abre el menú de tres puntos (`⋮`) en la esquina superior derecha del navegador y selecciona **"Agregar a la pantalla principal"** o **"Instalar aplicación"**.
+4. La aplicación se ejecutará a pantalla completa (*standalone*), sin barra de direcciones y con acceso desde el cajón de apps.
 
 ### En iOS / iPhone (Safari)
-1. Abre la aplicación en el navegador **Safari**.
-2. Pulsa el botón de **Compartir** (icono de un cuadro con una flecha hacia arriba en la barra inferior).
+1. Abre el enlace de la aplicación en el navegador **Safari**.
+2. Toca el botón de **Compartir** (icono de un recuadro con flecha hacia arriba en la barra inferior).
 3. Desplázate hacia abajo en el menú de opciones y selecciona **"Agregar al inicio"** (*Add to Home Screen*).
-4. Confirma el nombre y pulsa **"Agregar"**. La PWA quedará lista para usarse como una app nativa en tu iPhone.
+4. Confirma el nombre deseado y presiona **"Agregar"**. La app se añadirá a la pantalla de inicio de tu iPhone o iPad con su icono oficial.
 
 ---
 
-## 📁 Estructura del Proyecto
+## 📂 Estructura de Archivos del Proyecto
 
 ```
 examen-pwa/
-├── index.html          # Estructura semántica HTML5, metadatos PWA, contenedores accesibles
-├── styles.css          # Estilos CSS modernos (variables, dark mode/slate, glassmorphism, mobile layout)
-├── app.js              # Lógica de la prueba, control de estados, banco de preguntas y eventos PWA
-├── sw.js               # Service Worker con caché offline (Cache-First) y ciclo de vida (install/activate/fetch)
-├── manifest.json       # Manifiesto de la aplicación web (nombre, iconos, colores de tema, modo standalone)
-├── server.js           # Servidor local Node.js ligero con manejo adecuado de tipos MIME
-├── package.json        # Configuración del proyecto y scripts de ejecución
-├── .gitignore          # Reglas para excluir dependencias, logs y archivos temporales de Git
-└── icons/              # Recursos visuales e iconografía del sistema
-    ├── favicon.svg     # Icono de pestaña para el navegador
-    ├── icon-192.svg    # Icono PWA en resolución estándar (192x192)
-    └── icon-512.svg    # Icono PWA en alta resolución y maskable (512x512)
+├── server.js           # Servidor backend Express: endpoints de API, llamada a Gemini 2.5 Flash y subida de PDFs
+├── app.js              # Controlador cliente PWA: categorías, dashboard, Modo Mix, Active Recall y navegación
+├── index.html          # Estructura semántica SPA: vistas principales, barra de progreso y modales interactivos
+├── styles.css          # Sistema de diseño UI/UX: glassmorphism, responsive mobile-first, badges y animaciones
+├── preguntas.json      # Banco oficial inicial de 200 preguntas comentadas (Residentado Médico)
+├── sw.js               # Service Worker (quizmaster-pwa-v6) para caché offline y soporte PWA
+├── manifest.json       # Manifiesto de la aplicación (nombre, tema #4f46e5, iconos y modo standalone)
+├── package.json        # Dependencias del proyecto (@google/genai, express, express-fileupload, dotenv)
+├── .env                # Variables de entorno confidenciales (GEMINI_API_KEY)
+└── icons/              # Iconografía PWA y Favicons vectoriales (SVG)
+    ├── favicon.svg     # Icono de pestaña del navegador
+    ├── icon-192.svg    # Icono PWA en 192x192
+    └── icon-512.svg    # Icono PWA en 512x512
 ```
-
-### Detalle de los componentes principales:
-- **`index.html`**: Define la arquitectura de una sola página (SPA). Contiene las secciones de cabecera, barra de progreso, tarjeta de pregunta interactiva, barra de navegación fija inferior y la pantalla modal de resultados.
-- **`styles.css`**: Implementa una interfaz limpia y atractiva sin dependencias pesadas. Usa variables CSS personalizadas, sombras difuminadas, bordes sutiles y transiciones que aportan una sensación de aplicación nativa.
-- **`app.js`**: Orquesta el flujo de la aplicación: carga las preguntas, registra las respuestas del usuario, actualiza la barra de progreso, calcula la calificación final y gestiona el prompt de instalación PWA.
-- **`sw.js`**: Permite interceptar las solicitudes de red para responder con los archivos cacheados localmente cuando el dispositivo se queda sin conexión o tiene una red intermitente.
-- **`manifest.json`**: Especifica las credenciales de identidad de la PWA ante el sistema operativo móvil (icono de inicio, color de la barra de estado y comportamiento standalone).
 
 ---
 
-## 🔮 Próximas Mejoras (Fase 2)
+## 🧪 Resumen de Tecnologías
 
-- 📄 **Módulo de Subida y Procesamiento de PDFs**:
-  - Permitir a docentes y estudiantes cargar documentos o libros extensos en PDF para extraer texto relevante.
-- 🤖 **Generación Automática de Exámenes con Inteligencia Artificial (IA)**:
-  - Integración de modelos de lenguaje (LLMs) para sintetizar preguntas de opción múltiple, respuestas fundamentadas y niveles de dificultad a partir del contenido de los PDFs subidos.
-- ⏱️ **Modo Temporizador y Examen Cronometrado**:
-  - Ajuste de límite de tiempo por pregunta o por evaluación completa con guardado automático.
-- 📈 **Historial y Analíticas de Rendimiento**:
-  - Almacenamiento local persistente (IndexedDB) de intentos anteriores y estadísticas de progreso académico.
-- 🌐 **Soporte Multilenguaje y Modo Oscuro/Claro Dinámico**:
-  - Personalización de temas visuales e internacionalización (i18n).
+| Capa | Tecnología | Propósito |
+| :--- | :--- | :--- |
+| **Frontend** | Vanilla JavaScript (ES6+), HTML5, CSS3 | Alto rendimiento, cero dependencias pesadas, carga inmediata |
+| **Backend** | Node.js, Express.js | Servidor HTTP y API REST ligera |
+| **Inteligencia Artificial** | `@google/genai` (Gemini 2.5 Flash) | Extracción de PDFs, auditoría de claves y justificaciones médicas |
+| **PWA & Offline** | Service Worker Cache API, Web App Manifest | Funcionamiento autónomo sin conexión a internet |
+| **Almacenamiento Local** | `localStorage` con claves prefijadas | Persistencia modular por categoría (`categoria_${id}`, `bolsaRepaso_${catId}_${examId}`) |
+
+---
+
+## 📄 Licencia
+
+Este proyecto está bajo la Licencia [MIT](LICENSE).
